@@ -1,0 +1,24 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Serveur MeteoClub",
+        "description": "Connectez-vous à votre serveur MeteoClub. Toutes vos villes favorites seront ajoutées comme appareils.",
+        "data": {
+          "server_url": "URL du serveur",
+          "username": "Nom d'utilisateur",
+          "password": "Mot de passe"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Impossible de se connecter au serveur MeteoClub.",
+      "invalid_auth": "Nom d'utilisateur ou mot de passe invalide.",
+      "no_favorites": "Aucune ville favorite trouvée. Veuillez d'abord ajouter des favoris sur l'interface web MeteoClub.",
+      "unknown": "Une erreur inattendue est survenue."
+    },
+    "abort": {
+      "already_configured": "Ce compte est déjà configuré."
+    }
+  }
+}

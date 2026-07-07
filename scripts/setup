@@ -1,0 +1,16 @@
+#!/usr/bin/env bash
+
+set -e
+
+cd "$(dirname "$0")/.."
+
+
+
+python3 -m pip install --requirement requirements.txt
+
+echo "
+Home Assistant dev environment ready.
+
+To start Home Assistant, run:
+
+   ./scripts/develop"

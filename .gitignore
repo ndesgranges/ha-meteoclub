@@ -1,0 +1,20 @@
+# artifacts
+.DS_Store
+__pycache__
+.pytest*
+*.egg-info
+*/build/*
+*/dist/*
+libfaketime/
+
+
+# misc
+.coverage
+.vscode
+coverage.xml
+.ruff_cache
+
+
+# Home Assistant dev
+config/
+devcontainer/devcontainer-lock.json
