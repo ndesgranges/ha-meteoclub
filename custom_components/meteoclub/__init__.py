@@ -1,13 +1,17 @@
 """MeteoClub - Home Assistant Custom Integration.
 
 Fetches weather data from a MeteoClub server and creates sensors
-for each favorite weather station (city).
+for each favorite weather station (city). Also provides a weather
+dashboard for comparing observation vs forecast accuracy.
 """
 
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 
+from homeassistant.components import frontend
+from homeassistant.components.http import StaticPathConfig
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_PASSWORD, CONF_USERNAME
 from homeassistant.core import HomeAssistant
@@ -16,10 +20,27 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from .api import MeteoClubApi
 from .const import CONF_SERVER_URL, DOMAIN
 from .coordinator import MeteoClubCoordinator
+from .websocket import async_register_websocket_api
 
 _LOGGER = logging.getLogger(__name__)
 
 PLATFORMS = ["sensor"]
+
+# Frontend panel configuration
+PANEL_URL = "/meteoclub-panel"
+PANEL_TITLE = "MeteoClub"
+PANEL_ICON = "mdi:weather-partly-cloudy"
+PANEL_NAME = "meteoclub-panel"
+
+
+async def async_setup(hass: HomeAssistant, config: dict) -> bool:
+    """Set up the MeteoClub component."""
+    hass.data.setdefault(DOMAIN, {})
+
+    # Register WebSocket API
+    async_register_websocket_api(hass)
+
+    return True
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
@@ -57,10 +78,52 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         "favorites": favorites,
     }
 
+    # Register frontend panel (only once)
+    await _async_register_panel(hass)
+
     # Forward to sensor platform
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     return True
+
+
+async def _async_register_panel(hass: HomeAssistant) -> None:
+    """Register the MeteoClub frontend panel."""
+    # Check if panel is already registered
+    if PANEL_NAME in hass.data.get("frontend_panels", {}):
+        return
+
+    # Path to our frontend files
+    frontend_path = Path(__file__).parent / "frontend"
+
+    # Register static path for serving the JS file
+    await hass.http.async_register_static_paths(
+        [
+            StaticPathConfig(
+                url_path=f"/{DOMAIN}/frontend",
+                path=str(frontend_path),
+                cache_headers=False,
+            )
+        ]
+    )
+
+    # Register the panel
+    frontend.async_register_built_in_panel(
+        hass,
+        component_name="custom",
+        sidebar_title=PANEL_TITLE,
+        sidebar_icon=PANEL_ICON,
+        frontend_url_path=DOMAIN,
+        config={
+            "_panel_custom": {
+                "name": PANEL_NAME,
+                "module_url": f"/{DOMAIN}/frontend/meteoclub-panel.js",
+            }
+        },
+        require_admin=False,
+    )
+
+    _LOGGER.info("MeteoClub dashboard panel registered")
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:

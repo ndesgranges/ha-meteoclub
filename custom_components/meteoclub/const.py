@@ -16,8 +16,20 @@ API_CITY = "/cities/{city_id}"
 API_OBSERVATIONS = "/observations/city/{city_id}"
 API_FORECASTS = "/forecasts/city/{city_id}"
 
-# Sensor types
-SENSOR_TYPES = {
+# Available forecast models
+FORECAST_MODELS = ["gfs", "wrf", "arome", "arpege", "icon_eu"]
+
+# Model display names
+MODEL_NAMES = {
+    "gfs": "GFS",
+    "wrf": "WRF",
+    "arome": "AROME",
+    "arpege": "ARPEGE",
+    "icon_eu": "ICON-EU",
+}
+
+# Observation sensor types
+OBSERVATION_SENSOR_TYPES = {
     "temperature": {
         "name": "Temperature",
         "unit": "°C",
@@ -107,3 +119,49 @@ SENSOR_TYPES = {
         "field": "cloud_cover",
     },
 }
+
+# For backwards compatibility
+SENSOR_TYPES = OBSERVATION_SENSOR_TYPES
+
+# Metrics available for dashboard charts
+DASHBOARD_METRICS = {
+    "temperature": {
+        "name": "Temperature",
+        "unit": "°C",
+        "field": "temperature",
+        "icon": "mdi:thermometer",
+    },
+    "humidity": {
+        "name": "Humidity",
+        "unit": "%",
+        "field": "humidity_percent",
+        "icon": "mdi:water-percent",
+    },
+    "pressure": {
+        "name": "Pressure",
+        "unit": "hPa",
+        "field": "pressure_hpa",
+        "icon": "mdi:gauge",
+    },
+    "wind_speed": {
+        "name": "Wind Speed",
+        "unit": "km/h",
+        "field": "wind_speed_kmh",
+        "icon": "mdi:weather-windy",
+    },
+    "precipitation": {
+        "name": "Precipitation",
+        "unit": "mm",
+        "field": "precipitation_mm",
+        "icon": "mdi:weather-rainy",
+    },
+    "cloud_cover": {
+        "name": "Cloud Cover",
+        "unit": "%",
+        "field": "cloud_cover_percent",
+        "icon": "mdi:cloud",
+    },
+}
+
+# Available horizon options in days for the dashboard
+HORIZON_OPTIONS = [1, 2, 3, 5, 7, 10]

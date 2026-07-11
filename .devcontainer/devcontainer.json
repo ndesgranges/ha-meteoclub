@@ -4,10 +4,6 @@
     "postCreateCommand": "scripts/setup",
     "workspaceMount": "source=${localWorkspaceFolder},target=/workspaces/ha-meteoclub,type=bind",
     "workspaceFolder": "/workspaces/ha-meteoclub",
-    "containerEnv": {
-        "LD_PRELOAD": "/usr/local/lib/faketime/libfaketime.so.1",
-        "FAKETIME": "+0d"
-    },
     "forwardPorts": [
         8123
     ],

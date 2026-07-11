@@ -1,6 +1,6 @@
 """Sensor platform for MeteoClub.
 
-Creates sensor entities for weather data from MeteoClub stations.
+Creates sensor entities for current weather observations from MeteoClub stations.
 """
 
 from __future__ import annotations
@@ -26,7 +26,7 @@ from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, SENSOR_TYPES
+from .const import DOMAIN, OBSERVATION_SENSOR_TYPES
 from .coordinator import MeteoClubCoordinator
 
 # Map device class strings to actual device classes
@@ -62,14 +62,14 @@ async def async_setup_entry(
 
     entities = []
 
-    # Create sensors for each favorite city
+    # Create observation sensors for each favorite city
     for favorite in favorites:
         city = favorite["city"]
         city_id = city["id"]
         city_name = city["name"]
         coordinator = coordinators[city_id]
 
-        for sensor_key, sensor_def in SENSOR_TYPES.items():
+        for sensor_key, sensor_def in OBSERVATION_SENSOR_TYPES.items():
             entities.append(
                 MeteoClubSensor(
                     coordinator=coordinator,
@@ -84,7 +84,7 @@ async def async_setup_entry(
 
 
 class MeteoClubSensor(CoordinatorEntity[MeteoClubCoordinator], SensorEntity):
-    """A sensor representing a MeteoClub weather metric."""
+    """A sensor representing a MeteoClub observation metric."""
 
     _attr_has_entity_name = True
 
@@ -171,7 +171,5 @@ class MeteoClubSensor(CoordinatorEntity[MeteoClubCoordinator], SensorEntity):
                 attrs["longitude"] = city.get("longitude")
             if city.get("altitude"):
                 attrs["altitude"] = city.get("altitude")
-
-        return attrs
 
         return attrs
