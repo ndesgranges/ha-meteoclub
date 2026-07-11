@@ -244,8 +244,8 @@ class MeteoClubWeather(CoordinatorEntity[MeteoClubCoordinator], WeatherEntity):
         if not forecasts:
             return None
 
-        # Group by date and take one per day (noon preferred)
-        daily_forecasts: dict[str, dict] = {}
+        # Group all forecasts by date to calculate min/max
+        daily_data: dict[str, list[dict]] = {}
         for fc in forecasts:
             forecast_for = fc.get("forecast_for")
             if not forecast_for:
@@ -254,24 +254,46 @@ class MeteoClubWeather(CoordinatorEntity[MeteoClubCoordinator], WeatherEntity):
             dt = datetime.fromisoformat(forecast_for.replace("Z", "+00:00"))
             date_key = dt.strftime("%Y-%m-%d")
 
-            # Prefer noon forecast, otherwise take the first one
-            existing = daily_forecasts.get(date_key)
-            if existing is None or (11 <= dt.hour <= 13):
-                daily_forecasts[date_key] = fc
+            if date_key not in daily_data:
+                daily_data[date_key] = []
+            daily_data[date_key].append({"fc": fc, "hour": dt.hour})
 
         # Convert to HA Forecast format
         result: list[Forecast] = []
-        for date_key in sorted(daily_forecasts.keys()):
-            fc = daily_forecasts[date_key]
+        for date_key in sorted(daily_data.keys()):
+            day_forecasts = daily_data[date_key]
+            
+            # Calculate min/max temperatures from all forecasts of the day
+            temps = [
+                f["fc"].get("temperature") 
+                for f in day_forecasts 
+                if f["fc"].get("temperature") is not None
+            ]
+            temp_max = max(temps) if temps else None
+            temp_min = min(temps) if temps else None
+            
+            # Sum precipitation for the day
+            precip_total = sum(
+                f["fc"].get("precipitation_mm") or 0 
+                for f in day_forecasts
+            )
+            
+            # Pick noon forecast for other fields (condition, humidity, wind)
+            # Fallback to first forecast if no noon available
+            noon_fc = next(
+                (f["fc"] for f in day_forecasts if 11 <= f["hour"] <= 13),
+                day_forecasts[0]["fc"]
+            )
+            
             forecast: Forecast = {
-                "datetime": fc.get("forecast_for"),
-                "native_temperature": fc.get("temperature_max") or fc.get("temperature"),
-                "native_templow": fc.get("temperature_min"),
-                "humidity": fc.get("humidity_percent"),
-                "native_precipitation": fc.get("precipitation_mm"),
-                "native_wind_speed": fc.get("wind_speed_kmh"),
-                "wind_bearing": fc.get("wind_direction"),
-                "condition": map_condition(fc.get("weather_description")),
+                "datetime": f"{date_key}T12:00:00Z",
+                "native_temperature": temp_max,
+                "native_templow": temp_min,
+                "humidity": noon_fc.get("humidity_percent"),
+                "native_precipitation": precip_total if precip_total > 0 else None,
+                "native_wind_speed": noon_fc.get("wind_speed_kmh"),
+                "wind_bearing": noon_fc.get("wind_direction"),
+                "condition": map_condition(noon_fc.get("weather_description")),
             }
             result.append(forecast)
 
