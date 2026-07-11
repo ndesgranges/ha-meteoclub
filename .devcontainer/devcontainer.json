@@ -13,6 +13,9 @@
             "onAutoForward": "notify"
         }
     },
+    "appPort": [
+        "8123:8123"
+    ],
     "customizations": {
         "vscode": {
             "extensions": [

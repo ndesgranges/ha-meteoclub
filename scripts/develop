@@ -8,16 +8,18 @@ cd "$(dirname "$0")/.."
 if [[ ! -d "${PWD}/config" ]]; then
     mkdir -p "${PWD}/config"
     hass --config "${PWD}/config" --script ensure_config
+    # Bind to 0.0.0.0 for mobile testing
+    echo -e "\nhttp:\n  server_host: 0.0.0.0" >> "${PWD}/config/configuration.yaml"
     wget -O - https://get.hacs.xyz | bash -
     ln -s "${PWD}/custom_components/meteoclub" "${PWD}/config/custom_components/meteoclub"
 fi
 
-echo 'Starting Home Assistant in development mode...
+echo "Starting Home Assistant in development mode...
     - Custom component mounted at /config/custom_components/meteoclub
     - Access UI at http://localhost:8123
+    - For mobile testing, use your host machine's IP on port 8123
 
-
-    '
+    "
 
 # Start Home Assistant
 hass --config "${PWD}/config" --debug
