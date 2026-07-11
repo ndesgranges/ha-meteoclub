@@ -17,4 +17,5 @@ coverage.xml
 
 # Home Assistant dev
 config/
-evcontainer/devcontainer-lock.json
+.devcontainer/devcontainer-lock.json
+requirements.md

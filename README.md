@@ -33,4 +33,4 @@ https://github.com/ndesgranges/ha-meteoclub
 
 ### Manual
 
-opy the `custom_components/meteoclub/` folder into your HA `config/custom_components/` directory.
+Copy the `custom_components/meteoclub/` folder into your HA `config/custom_components/` directory.
