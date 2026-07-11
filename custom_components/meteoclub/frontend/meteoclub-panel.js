@@ -1,10 +1,15 @@
 /**
  * MeteoClub Weather Dashboard Panel
- * Version: 5.0.0 - Native HA components (ha-top-app-bar-fixed, ha-date-range-picker)
+ * Version: 5.1.0 - Native HA components with proper lazy-loading support
  *
  * A custom Home Assistant panel that displays weather model accuracy comparison.
  * Uses Home Assistant's native ha-chart-base component with ECharts for proper
  * styling, interactions, and the built-in legend with checkboxes to toggle series.
+ * 
+ * Component Loading Strategy:
+ * - ha-top-app-bar-fixed and ha-date-range-picker are lazy-loaded by HA
+ * - We trigger loading by accessing partial-panel-resolver's routes
+ * - ha-date-range-picker is created programmatically to set hass BEFORE DOM insertion
  */
 
 const PANEL_NAME = "meteoclub-panel";
@@ -143,27 +148,111 @@ class MeteoClubPanel extends HTMLElement {
   }
 
   async _ensureComponentsLoaded() {
-    // Load the "history" fragment which includes ha-top-app-bar-fixed and ha-date-range-picker
-    // This is the HA-native way to trigger lazy loading of components
-    try {
-      await this._hass.loadFragmentTranslation("history");
-    } catch (e) {
-      console.warn("MeteoClub: Could not load history fragment:", e);
+    // The key insight: HA components are lazy-loaded when their parent panel is accessed.
+    // ha-top-app-bar-fixed and ha-date-range-picker are loaded by the history/logbook panels.
+    // We need to trigger those panel modules to load.
+    
+    const componentsNeeded = ["ha-top-app-bar-fixed", "ha-date-range-picker"];
+    
+    // Check if already available
+    if (componentsNeeded.every(name => customElements.get(name))) {
+      console.log("MeteoClub: All components already defined");
+      return;
     }
     
-    // Now wait for the components to be defined (they should be loading now)
-    const components = [
-      "ha-top-app-bar-fixed",
-      "ha-date-range-picker",
-    ];
+    console.log("MeteoClub: Components not loaded, attempting to load...");
     
-    await Promise.all(
-      components.map(name => 
-        customElements.whenDefined(name).catch(() => {
-          console.warn(`MeteoClub: Component ${name} not available`);
-        })
-      )
-    );
+    // Method 1: Access partial-panel-resolver and trigger panel imports
+    // Retry a few times since routerOptions might not be populated immediately
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        const homeAssistant = document.querySelector("home-assistant");
+        const haMain = homeAssistant?.shadowRoot?.querySelector("home-assistant-main");
+        const partialResolver = haMain?.shadowRoot?.querySelector("partial-panel-resolver");
+        
+        if (partialResolver?.routerOptions?.routes) {
+          const routes = partialResolver.routerOptions.routes;
+          console.log("MeteoClub: Found router routes, available panels:", Object.keys(routes));
+          
+          // Try loading panels that contain our needed components
+          // history, logbook, and energy panels all use ha-top-app-bar-fixed
+          const panelsToLoad = ["history", "logbook", "energy", "calendar"];
+          
+          for (const panelName of panelsToLoad) {
+            if (routes[panelName]?.load) {
+              console.log(`MeteoClub: Loading ${panelName} panel module...`);
+              try {
+                await routes[panelName].load();
+                console.log(`MeteoClub: ${panelName} panel module loaded`);
+              } catch (e) {
+                console.warn(`MeteoClub: Failed to load ${panelName}:`, e);
+              }
+              
+              // Check if we now have what we need
+              if (componentsNeeded.every(name => customElements.get(name))) {
+                console.log("MeteoClub: All components now available");
+                return;
+              }
+            }
+          }
+        } else {
+          console.log(`MeteoClub: Router routes not ready, attempt ${attempt + 1}/3`);
+          await new Promise(r => setTimeout(r, 200));
+        }
+      } catch (e) {
+        console.warn(`MeteoClub: Method 1 attempt ${attempt + 1} failed:`, e);
+        await new Promise(r => setTimeout(r, 200));
+      }
+    }
+    
+    // Check again if components are now available
+    if (componentsNeeded.every(name => customElements.get(name))) {
+      console.log("MeteoClub: Components now available after router load");
+      return;
+    }
+    
+    // Method 2: Try loadCardHelpers - loads common card components
+    try {
+      if (window.loadCardHelpers) {
+        const helpers = await window.loadCardHelpers();
+        console.log("MeteoClub: Card helpers loaded");
+        
+        // Try creating a history-graph card which might trigger loading
+        if (helpers?.createCardElement) {
+          try {
+            helpers.createCardElement({ type: "history-graph", entities: ["sun.sun"] });
+            console.log("MeteoClub: Created history-graph card element");
+          } catch (e) {
+            // Expected if no entities
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("MeteoClub: Method 2 (loadCardHelpers) failed:", e);
+    }
+    
+    // Method 3: Wait with a longer timeout for components to become defined
+    const timeout = 8000;
+    const startTime = Date.now();
+    
+    while (!componentsNeeded.every(name => customElements.get(name)) && Date.now() - startTime < timeout) {
+      await new Promise(r => setTimeout(r, 200));
+      
+      // Log progress
+      const defined = componentsNeeded.filter(name => customElements.get(name));
+      if (defined.length > 0 && Date.now() - startTime > 2000) {
+        console.log(`MeteoClub: Waiting for components... (${defined.length}/${componentsNeeded.length} defined)`);
+      }
+    }
+    
+    // Final status
+    for (const name of componentsNeeded) {
+      if (customElements.get(name)) {
+        console.log(`MeteoClub: ✓ Component ${name} is defined`);
+      } else {
+        console.error(`MeteoClub: ✗ Component ${name} NOT available - the panel may not render correctly`);
+      }
+    }
   }
 
   async _loadChartData() {
@@ -218,6 +307,8 @@ class MeteoClubPanel extends HTMLElement {
       return;
     }
 
+    // Note: ha-date-range-picker is added programmatically to ensure hass is set BEFORE
+    // the element is added to DOM. This prevents "this.hass is undefined" errors in Lit's willUpdate.
     // Content goes INSIDE ha-top-app-bar-fixed (in default slot)
     this.shadowRoot.innerHTML = `
       <style>${this._getStyles()}</style>
@@ -229,10 +320,7 @@ class MeteoClubPanel extends HTMLElement {
             <div class="card-content controls">
               <div class="control-group date-range-group">
                 <label>Date Range</label>
-                <ha-date-range-picker
-                  id="date-range-picker"
-                  extended-presets
-                ></ha-date-range-picker>
+                <div id="date-range-picker-container"></div>
               </div>
 
               <div class="control-group">
@@ -291,13 +379,26 @@ class MeteoClubPanel extends HTMLElement {
       topAppBar.narrow = this._narrow;
     }
 
-    // Setup date range picker - MUST pass hass for localization
-    const dateRangePicker = this.shadowRoot.getElementById("date-range-picker");
-    if (dateRangePicker) {
-      // Pass hass first (required for localization)
+    // Create ha-date-range-picker PROGRAMMATICALLY to set hass BEFORE adding to DOM
+    // This prevents "this.hass is undefined" errors in Lit's willUpdate lifecycle
+    const container = this.shadowRoot.getElementById("date-range-picker-container");
+    if (container && customElements.get("ha-date-range-picker")) {
+      // Clear container first
+      container.innerHTML = "";
+      
+      // Create element
+      const dateRangePicker = document.createElement("ha-date-range-picker");
+      
+      // Set hass FIRST - this is critical!
       dateRangePicker.hass = this._hass;
+      
+      // Set other properties
+      dateRangePicker.id = "date-range-picker";
       dateRangePicker.startDate = this._startDate;
       dateRangePicker.endDate = this._endDate;
+      dateRangePicker.setAttribute("extended-presets", "");
+      
+      // Add event listener
       dateRangePicker.addEventListener("value-changed", (e) => {
         const { startDate, endDate } = e.detail.value;
         if (startDate && endDate) {
@@ -307,6 +408,14 @@ class MeteoClubPanel extends HTMLElement {
           this._loadChartData();
         }
       });
+      
+      // NOW add to DOM - after hass is set
+      container.appendChild(dateRangePicker);
+      console.log("MeteoClub: ha-date-range-picker created and added to DOM with hass set");
+    } else if (container) {
+      // Component not available - show fallback message
+      container.innerHTML = `<span class="date-range-fallback">Date picker loading...</span>`;
+      console.warn("MeteoClub: ha-date-range-picker not defined, showing fallback");
     }
 
     // City select
@@ -509,6 +618,24 @@ class MeteoClubPanel extends HTMLElement {
       .control-group.date-range-group {
         min-width: 300px;
         flex-grow: 1;
+      }
+
+      #date-range-picker-container {
+        width: 100%;
+      }
+
+      #date-range-picker-container ha-date-range-picker {
+        width: 100%;
+      }
+
+      .date-range-fallback {
+        display: block;
+        padding: 8px 12px;
+        font-size: 14px;
+        color: var(--secondary-text-color, #666);
+        font-style: italic;
+        border: 1px dashed var(--divider-color, #e0e0e0);
+        border-radius: 4px;
       }
 
       .control-group.date-range-group ha-date-range-picker {
