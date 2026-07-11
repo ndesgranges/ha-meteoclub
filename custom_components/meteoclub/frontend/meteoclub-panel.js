@@ -588,6 +588,7 @@ class MeteoClubPanel extends HTMLElement {
         name: this._metric ? `${this._metric.name} (${this._metric.unit})` : '',
         nameLocation: "middle",
         nameGap: 50,
+        scale: true,  // Auto-scale based on data, don't force include 0
       },
       legend: {
         show: false,  // We use our own legend
