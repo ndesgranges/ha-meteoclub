@@ -14,7 +14,10 @@ fi
 
 echo 'Starting Home Assistant in development mode...
     - Custom component mounted at /config/custom_components/meteoclub
-    - Access UI at http://localhost:8123\n\n'
+    - Access UI at http://localhost:8123
+
+
+    '
 
 # Start Home Assistant
-ass --config "${PWD}/config" --debug
+hass --config "${PWD}/config" --debug
