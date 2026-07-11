@@ -31,6 +31,7 @@ PANEL_URL = "/meteoclub-panel"
 PANEL_TITLE = "MeteoClub"
 PANEL_ICON = "mdi:weather-partly-cloudy"
 PANEL_NAME = "meteoclub-panel"
+PANEL_VERSION = "1.0.2"
 
 
 async def async_setup(hass: HomeAssistant, config: dict) -> bool:
@@ -123,7 +124,7 @@ async def _async_register_panel(hass: HomeAssistant) -> None:
         config={
             "_panel_custom": {
                 "name": PANEL_NAME,
-                "module_url": f"/{DOMAIN}/frontend/meteoclub-panel.js",
+                "module_url": f"/{DOMAIN}/frontend/meteoclub-panel.js?v={PANEL_VERSION}",
             }
         },
         require_admin=False,
