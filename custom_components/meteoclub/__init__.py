@@ -24,7 +24,7 @@ from .websocket import async_register_websocket_api
 
 _LOGGER = logging.getLogger(__name__)
 
-PLATFORMS = ["sensor"]
+PLATFORMS = ["sensor", "weather"]
 
 # Frontend panel configuration
 PANEL_URL = "/meteoclub-panel"

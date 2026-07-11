@@ -1,0 +1,309 @@
+"""Weather platform for MeteoClub.
+
+Provides a native Home Assistant weather entity for each favorite city.
+Current conditions from observations, forecasts from weather models.
+"""
+
+from __future__ import annotations
+
+from datetime import datetime
+from typing import Any
+
+from homeassistant.components.weather import (
+    Forecast,
+    WeatherEntity,
+    WeatherEntityFeature,
+)
+from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import (
+    UnitOfPrecipitationDepth,
+    UnitOfPressure,
+    UnitOfSpeed,
+    UnitOfTemperature,
+)
+from homeassistant.core import HomeAssistant
+from homeassistant.helpers.device_registry import DeviceInfo
+from homeassistant.helpers.entity_platform import AddEntitiesCallback
+from homeassistant.helpers.update_coordinator import CoordinatorEntity
+
+from .const import DOMAIN
+from .coordinator import MeteoClubCoordinator
+
+
+def map_condition(raw_condition: str | None) -> str | None:
+    """Map MeteoClub/meteociel condition strings to HA conditions.
+    
+    HA conditions: clear-night, cloudy, fog, hail, lightning, lightning-rainy,
+    partlycloudy, pouring, rainy, snowy, snowy-rainy, sunny, windy, windy-variant,
+    exceptional
+    """
+    if not raw_condition:
+        return None
+    
+    condition = raw_condition.lower()
+    
+    # Sun/Clear
+    if any(x in condition for x in ["soleil", "sunny", "clear", "ensoleill", "beau"]):
+        return "sunny"
+    
+    # Partly cloudy
+    if any(x in condition for x in ["partiellement", "partly", "éclaircies", "voilé", "peu nuageux"]):
+        return "partlycloudy"
+    
+    # Cloudy/Overcast
+    if any(x in condition for x in ["nuageux", "couvert", "cloudy", "overcast", "gris"]):
+        return "cloudy"
+    
+    # Fog/Mist
+    if any(x in condition for x in ["brouillard", "brume", "fog", "mist"]):
+        return "fog"
+    
+    # Thunderstorm
+    if any(x in condition for x in ["orage", "thunder", "storm", "éclair"]):
+        return "lightning-rainy"
+    
+    # Heavy rain
+    if any(x in condition for x in ["forte pluie", "heavy rain", "averse", "déluge", "pouring"]):
+        return "pouring"
+    
+    # Rain
+    if any(x in condition for x in ["pluie", "rain", "pluvieux", "bruine", "drizzle"]):
+        return "rainy"
+    
+    # Snow
+    if any(x in condition for x in ["neige", "snow"]):
+        return "snowy"
+    
+    # Sleet
+    if any(x in condition for x in ["verglas", "sleet", "pluie et neige", "neige fondue"]):
+        return "snowy-rainy"
+    
+    # Hail
+    if any(x in condition for x in ["grêle", "hail"]):
+        return "hail"
+    
+    # Wind
+    if any(x in condition for x in ["vent", "wind"]):
+        return "windy"
+    
+    # Default: return None to let HA show unknown
+    return None
+
+
+async def async_setup_entry(
+    hass: HomeAssistant,
+    entry: ConfigEntry,
+    async_add_entities: AddEntitiesCallback,
+) -> None:
+    """Set up MeteoClub weather entities from a config entry."""
+    data = hass.data[DOMAIN][entry.entry_id]
+    coordinators: dict[int, MeteoClubCoordinator] = data["coordinators"]
+    favorites: list[dict[str, Any]] = data["favorites"]
+
+    entities = []
+
+    for favorite in favorites:
+        city = favorite["city"]
+        city_id = city["id"]
+        city_name = city["name"]
+        coordinator = coordinators[city_id]
+
+        entities.append(
+            MeteoClubWeather(
+                coordinator=coordinator,
+                city_id=city_id,
+                city_name=city_name,
+            )
+        )
+
+    async_add_entities(entities)
+
+
+class MeteoClubWeather(CoordinatorEntity[MeteoClubCoordinator], WeatherEntity):
+    """Weather entity for a MeteoClub city."""
+
+    _attr_has_entity_name = True
+    _attr_name = None  # Use device name as entity name
+    _attr_native_temperature_unit = UnitOfTemperature.CELSIUS
+    _attr_native_pressure_unit = UnitOfPressure.HPA
+    _attr_native_wind_speed_unit = UnitOfSpeed.KILOMETERS_PER_HOUR
+    _attr_native_precipitation_unit = UnitOfPrecipitationDepth.MILLIMETERS
+    _attr_supported_features = (
+        WeatherEntityFeature.FORECAST_DAILY | WeatherEntityFeature.FORECAST_HOURLY
+    )
+
+    def __init__(
+        self,
+        coordinator: MeteoClubCoordinator,
+        city_id: int,
+        city_name: str,
+    ) -> None:
+        """Initialize the weather entity."""
+        super().__init__(coordinator)
+        self._city_id = city_id
+        self._city_name = city_name
+        self._attr_unique_id = f"{DOMAIN}_{city_id}_weather"
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        """Return device info for this weather entity."""
+        return DeviceInfo(
+            identifiers={(DOMAIN, str(self._city_id))},
+            name=self._city_name,
+            manufacturer="MeteoClub",
+            model="Weather Station",
+        )
+
+    @property
+    def _observation(self) -> dict[str, Any] | None:
+        """Get current observation data."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("observation")
+        return None
+
+    @property
+    def native_temperature(self) -> float | None:
+        """Return current temperature."""
+        if obs := self._observation:
+            return obs.get("temperature")
+        return None
+
+    @property
+    def native_pressure(self) -> float | None:
+        """Return current pressure."""
+        if obs := self._observation:
+            return obs.get("pressure_hpa")
+        return None
+
+    @property
+    def humidity(self) -> float | None:
+        """Return current humidity."""
+        if obs := self._observation:
+            return obs.get("humidity_percent")
+        return None
+
+    @property
+    def native_wind_speed(self) -> float | None:
+        """Return current wind speed."""
+        if obs := self._observation:
+            return obs.get("wind_speed_kmh")
+        return None
+
+    @property
+    def native_wind_gust_speed(self) -> float | None:
+        """Return current wind gust speed."""
+        if obs := self._observation:
+            return obs.get("wind_gust_kmh")
+        return None
+
+    @property
+    def wind_bearing(self) -> float | str | None:
+        """Return current wind bearing."""
+        if obs := self._observation:
+            return obs.get("wind_direction")
+        return None
+
+    @property
+    def native_visibility(self) -> float | None:
+        """Return current visibility in km."""
+        if obs := self._observation:
+            return obs.get("visibility_km")
+        return None
+
+    @property
+    def native_dew_point(self) -> float | None:
+        """Return current dew point."""
+        if obs := self._observation:
+            return obs.get("dew_point")
+        return None
+
+    @property
+    def cloud_coverage(self) -> int | None:
+        """Return current cloud coverage percentage."""
+        if obs := self._observation:
+            # cloud_cover is a string description, try to parse percentage
+            cloud = obs.get("cloud_cover")
+            if cloud and isinstance(cloud, (int, float)):
+                return int(cloud)
+        return None
+
+    @property
+    def condition(self) -> str | None:
+        """Return current weather condition."""
+        if obs := self._observation:
+            raw_condition = obs.get("weather_condition")
+            return map_condition(raw_condition)
+        return None
+
+    async def async_forecast_daily(self) -> list[Forecast] | None:
+        """Return daily forecast from GFS model."""
+        if not self.coordinator.data:
+            return None
+
+        forecasts = self.coordinator.data.get("forecasts_daily", [])
+        if not forecasts:
+            return None
+
+        # Group by date and take one per day (noon preferred)
+        daily_forecasts: dict[str, dict] = {}
+        for fc in forecasts:
+            forecast_for = fc.get("forecast_for")
+            if not forecast_for:
+                continue
+
+            dt = datetime.fromisoformat(forecast_for.replace("Z", "+00:00"))
+            date_key = dt.strftime("%Y-%m-%d")
+
+            # Prefer noon forecast, otherwise take the first one
+            existing = daily_forecasts.get(date_key)
+            if existing is None or (11 <= dt.hour <= 13):
+                daily_forecasts[date_key] = fc
+
+        # Convert to HA Forecast format
+        result: list[Forecast] = []
+        for date_key in sorted(daily_forecasts.keys()):
+            fc = daily_forecasts[date_key]
+            forecast: Forecast = {
+                "datetime": fc.get("forecast_for"),
+                "native_temperature": fc.get("temperature_max") or fc.get("temperature"),
+                "native_templow": fc.get("temperature_min"),
+                "humidity": fc.get("humidity_percent"),
+                "native_precipitation": fc.get("precipitation_mm"),
+                "native_wind_speed": fc.get("wind_speed_kmh"),
+                "wind_bearing": fc.get("wind_direction"),
+                "condition": map_condition(fc.get("weather_description")),
+            }
+            result.append(forecast)
+
+        return result if result else None
+
+    async def async_forecast_hourly(self) -> list[Forecast] | None:
+        """Return hourly forecast from ICON_EU model."""
+        if not self.coordinator.data:
+            return None
+
+        forecasts = self.coordinator.data.get("forecasts_hourly", [])
+        if not forecasts:
+            return None
+
+        # Convert to HA Forecast format
+        result: list[Forecast] = []
+        for fc in forecasts:
+            forecast_for = fc.get("forecast_for")
+            if not forecast_for:
+                continue
+
+            forecast: Forecast = {
+                "datetime": forecast_for,
+                "native_temperature": fc.get("temperature"),
+                "humidity": fc.get("humidity_percent"),
+                "native_precipitation": fc.get("precipitation_mm"),
+                "native_wind_speed": fc.get("wind_speed_kmh"),
+                "wind_bearing": fc.get("wind_direction"),
+                "condition": map_condition(fc.get("weather_description")),
+            }
+            result.append(forecast)
+
+        # Sort by datetime and limit to 48 hours
+        result.sort(key=lambda x: x.get("datetime", ""))
+        return result[:48] if result else None

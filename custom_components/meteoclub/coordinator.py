@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import logging
 from typing import Any
 
@@ -13,6 +13,10 @@ from .api import MeteoClubApi, MeteoClubApiError
 from .const import DEFAULT_SCAN_INTERVAL, DOMAIN
 
 _LOGGER = logging.getLogger(__name__)
+
+# Models used for weather entity forecasts
+DAILY_FORECAST_MODEL = "gfs"
+HOURLY_FORECAST_MODEL = "icon_eu"
 
 
 class MeteoClubCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -49,9 +53,44 @@ class MeteoClubCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Get the latest observation
             observation = await self.api.get_latest_observation(self.city_id)
 
+            # Get forecasts for weather entity (next 7 days)
+            now = datetime.now(timezone.utc)
+            forecast_end = now + timedelta(days=7)
+            
+            # Fetch GFS for daily and ICON_EU for hourly forecasts
+            # all_versions=False to get only the latest forecast per time slot
+            gfs_forecasts = []
+            icon_forecasts = []
+            
+            try:
+                gfs_data = await self.api.get_forecasts(
+                    self.city_id,
+                    model=DAILY_FORECAST_MODEL,
+                    all_versions=False,
+                    start_date=now.isoformat(),
+                    end_date=forecast_end.isoformat(),
+                )
+                gfs_forecasts = gfs_data.get("forecasts", []) if gfs_data else []
+            except Exception as err:
+                _LOGGER.warning("Failed to fetch GFS forecasts: %s", err)
+            
+            try:
+                icon_data = await self.api.get_forecasts(
+                    self.city_id,
+                    model=HOURLY_FORECAST_MODEL,
+                    all_versions=False,
+                    start_date=now.isoformat(),
+                    end_date=forecast_end.isoformat(),
+                )
+                icon_forecasts = icon_data.get("forecasts", []) if icon_data else []
+            except Exception as err:
+                _LOGGER.warning("Failed to fetch ICON_EU forecasts: %s", err)
+
             return {
                 "city": self.city_info,
                 "observation": observation,
+                "forecasts_daily": gfs_forecasts,
+                "forecasts_hourly": icon_forecasts,
             }
 
         except MeteoClubApiError as err:
