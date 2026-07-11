@@ -1,6 +1,6 @@
 /**
  * MeteoClub Weather Dashboard Panel
- * Version: 4.7.0 - Styled fallback date picker with presets
+ * Version: 5.0.0 - Native HA components (ha-top-app-bar-fixed, ha-date-range-picker)
  *
  * A custom Home Assistant panel that displays weather model accuracy comparison.
  * Uses Home Assistant's native ha-chart-base component with ECharts for proper
@@ -9,14 +9,13 @@
 
 const PANEL_NAME = "meteoclub-panel";
 
-// Colors for the chart series
 const COLORS = {
-  observation: "#4CAF50", // Green for actual observations
-  gfs: "#2196F3", // Blue
-  wrf: "#FF9800", // Orange
-  arome: "#9C27B0", // Purple
-  arpege: "#F44336", // Red
-  icon_eu: "#00BCD4", // Cyan
+  observation: "#4CAF50",
+  gfs: "#2196F3",
+  wrf: "#FF9800",
+  arome: "#9C27B0",
+  arpege: "#F44336",
+  icon_eu: "#00BCD4",
 };
 
 const STORAGE_KEY = "meteoclub_dashboard_prefs";
@@ -26,31 +25,21 @@ class MeteoClubPanel extends HTMLElement {
     super();
     this.attachShadow({ mode: "open" });
     this._hass = null;
+    this._narrow = false;
     this._config = null;
     this._cities = [];
     this._chartData = null;
     this._loading = false;
     this._allModels = [];
-    this._dateRangePicker = null;
     
-    // Load saved preferences or use defaults
     const saved = this._loadPreferences();
     this._selectedCity = saved.city || null;
     this._selectedMetric = saved.metric || "temperature";
     this._selectedHorizon = saved.horizon || 3;
     
-    // Initialize date range (default: last 7 days)
     const now = new Date();
-    if (saved.endDate) {
-      this._endDate = new Date(saved.endDate);
-    } else {
-      this._endDate = now;
-    }
-    if (saved.startDate) {
-      this._startDate = new Date(saved.startDate);
-    } else {
-      this._startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    }
+    this._endDate = saved.endDate ? new Date(saved.endDate) : now;
+    this._startDate = saved.startDate ? new Date(saved.startDate) : new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
   }
 
   _loadPreferences() {
@@ -79,13 +68,23 @@ class MeteoClubPanel extends HTMLElement {
   set hass(hass) {
     this._hass = hass;
     
-    // Update hass on the date range picker if it exists
-    if (this._dateRangePicker) {
-      this._dateRangePicker.hass = hass;
+    // Update hass on child HA components that need it
+    const dateRangePicker = this.shadowRoot?.querySelector("ha-date-range-picker");
+    if (dateRangePicker) {
+      dateRangePicker.hass = hass;
     }
     
     if (!this._config) {
       this._loadConfig();
+    }
+  }
+
+  set narrow(narrow) {
+    this._narrow = narrow;
+    // Update ha-top-app-bar-fixed narrow property if rendered
+    const topAppBar = this.shadowRoot?.querySelector("ha-top-app-bar-fixed");
+    if (topAppBar) {
+      topAppBar.narrow = narrow;
     }
   }
 
@@ -128,6 +127,9 @@ class MeteoClubPanel extends HTMLElement {
       }
 
       this._savePreferences();
+      
+      // Wait for HA components to be defined before rendering
+      await this._ensureComponentsLoaded();
       this._render();
 
       // Load initial chart data
@@ -138,6 +140,30 @@ class MeteoClubPanel extends HTMLElement {
       console.error("Failed to load MeteoClub config:", err);
       this._renderError("Failed to load configuration");
     }
+  }
+
+  async _ensureComponentsLoaded() {
+    // Load the "history" fragment which includes ha-top-app-bar-fixed and ha-date-range-picker
+    // This is the HA-native way to trigger lazy loading of components
+    try {
+      await this._hass.loadFragmentTranslation("history");
+    } catch (e) {
+      console.warn("MeteoClub: Could not load history fragment:", e);
+    }
+    
+    // Now wait for the components to be defined (they should be loading now)
+    const components = [
+      "ha-top-app-bar-fixed",
+      "ha-date-range-picker",
+    ];
+    
+    await Promise.all(
+      components.map(name => 
+        customElements.whenDefined(name).catch(() => {
+          console.warn(`MeteoClub: Component ${name} not available`);
+        })
+      )
+    );
   }
 
   async _loadChartData() {
@@ -192,79 +218,99 @@ class MeteoClubPanel extends HTMLElement {
       return;
     }
 
+    // Content goes INSIDE ha-top-app-bar-fixed (in default slot)
     this.shadowRoot.innerHTML = `
       <style>${this._getStyles()}</style>
       <ha-top-app-bar-fixed>
-        <span slot="title">
-          <ha-icon icon="mdi:weather-partly-cloudy"></ha-icon>
-          MeteoClub Weather Dashboard
-          ${this._loading ? '<ha-circular-progress indeterminate size="small" class="header-spinner"></ha-circular-progress>' : ''}
-        </span>
+        <span slot="title">MeteoClub</span>
+
+        <div class="content">
+          <ha-card>
+            <div class="card-content controls">
+              <div class="control-group date-range-group">
+                <label>Date Range</label>
+                <ha-date-range-picker
+                  id="date-range-picker"
+                  extended-presets
+                ></ha-date-range-picker>
+              </div>
+
+              <div class="control-group">
+                <label>City</label>
+                <select id="city-select" class="native-select">
+                  ${this._cities.map(c => `<option value="${c.id}" ${c.id === this._selectedCity ? "selected" : ""}>${c.name}</option>`).join("")}
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label>Metric</label>
+                <select id="metric-select" class="native-select">
+                  ${this._config.metrics.map(m => `<option value="${m.id}" ${m.id === this._selectedMetric ? "selected" : ""}>${m.name}</option>`).join("")}
+                </select>
+              </div>
+
+              <div class="control-group">
+                <label>Forecast Horizon</label>
+                <select id="horizon-select" class="native-select">
+                  ${this._config.horizons.map(h => `<option value="${h}" ${h === this._selectedHorizon ? "selected" : ""}>${h} day${h > 1 ? "s" : ""}</option>`).join("")}
+                </select>
+              </div>
+
+              ${this._loading ? '<ha-circular-progress indeterminate size="small"></ha-circular-progress>' : ''}
+            </div>
+          </ha-card>
+
+          <ha-card>
+            <div class="card-content">
+              <div class="chart-container" id="chart">
+                <div class="chart-placeholder">Select a city to display the chart</div>
+              </div>
+            </div>
+          </ha-card>
+
+          <ha-card class="info-card">
+            <div class="card-content">
+              <p>
+                <ha-icon icon="mdi:information-outline"></ha-icon>
+                Dashed lines show what each model predicted, based on forecasts made
+                <strong>${this._selectedHorizon} day${this._selectedHorizon > 1 ? "s" : ""}</strong> in advance.
+              </p>
+            </div>
+          </ha-card>
+        </div>
       </ha-top-app-bar-fixed>
-
-      <div class="panel">
-        <ha-card>
-          <div class="card-content controls">
-            <div class="control-group date-range-group">
-              <label>Date Range</label>
-              <div id="date-range-container"></div>
-            </div>
-
-            <div class="control-group">
-              <label>City</label>
-              <select id="city-select" class="native-select">
-                ${this._cities.map(c => `<option value="${c.id}" ${c.id === this._selectedCity ? "selected" : ""}>${c.name}</option>`).join("")}
-              </select>
-            </div>
-
-            <div class="control-group">
-              <label>Metric</label>
-              <select id="metric-select" class="native-select">
-                ${this._config.metrics.map(m => `<option value="${m.id}" ${m.id === this._selectedMetric ? "selected" : ""}>${m.name}</option>`).join("")}
-              </select>
-            </div>
-
-            <div class="control-group">
-              <label>Forecast Horizon</label>
-              <select id="horizon-select" class="native-select">
-                ${this._config.horizons.map(h => `<option value="${h}" ${h === this._selectedHorizon ? "selected" : ""}>${h} day${h > 1 ? "s" : ""}</option>`).join("")}
-              </select>
-            </div>
-
-            ${this._loading ? '<div class="loading-badge"><ha-circular-progress indeterminate size="tiny"></ha-circular-progress><span>Loading...</span></div>' : ''}
-          </div>
-        </ha-card>
-
-        <ha-card>
-          <div class="card-content">
-            <div class="chart-container" id="chart">
-              <div class="chart-placeholder">Select a city to display the chart</div>
-            </div>
-          </div>
-        </ha-card>
-
-        <ha-card class="info-card">
-          <div class="card-content">
-            <p>
-              <ha-icon icon="mdi:information-outline"></ha-icon>
-              Dashed lines show what each model predicted, based on forecasts made
-              <strong>${this._selectedHorizon} day${this._selectedHorizon > 1 ? "s" : ""}</strong> in advance.
-            </p>
-          </div>
-        </ha-card>
-      </div>
     `;
 
-    // Add event listeners
     this._setupEventListeners();
   }
 
   _setupEventListeners() {
-    const citySelect = this.shadowRoot.getElementById("city-select");
-    const metricSelect = this.shadowRoot.getElementById("metric-select");
-    const horizonSelect = this.shadowRoot.getElementById("horizon-select");
-    const dateRangeContainer = this.shadowRoot.getElementById("date-range-container");
+    // Set narrow on ha-top-app-bar-fixed
+    const topAppBar = this.shadowRoot.querySelector("ha-top-app-bar-fixed");
+    if (topAppBar) {
+      topAppBar.narrow = this._narrow;
+    }
 
+    // Setup date range picker - MUST pass hass for localization
+    const dateRangePicker = this.shadowRoot.getElementById("date-range-picker");
+    if (dateRangePicker) {
+      // Pass hass first (required for localization)
+      dateRangePicker.hass = this._hass;
+      dateRangePicker.startDate = this._startDate;
+      dateRangePicker.endDate = this._endDate;
+      dateRangePicker.addEventListener("value-changed", (e) => {
+        const { startDate, endDate } = e.detail.value;
+        if (startDate && endDate) {
+          this._startDate = startDate;
+          this._endDate = endDate;
+          this._savePreferences();
+          this._loadChartData();
+        }
+      });
+    }
+
+    // City select
+    const citySelect = this.shadowRoot.getElementById("city-select");
     if (citySelect) {
       citySelect.addEventListener("change", (e) => {
         const val = parseInt(e.target.value, 10);
@@ -276,6 +322,8 @@ class MeteoClubPanel extends HTMLElement {
       });
     }
 
+    // Metric select
+    const metricSelect = this.shadowRoot.getElementById("metric-select");
     if (metricSelect) {
       metricSelect.addEventListener("change", (e) => {
         const val = e.target.value;
@@ -287,6 +335,8 @@ class MeteoClubPanel extends HTMLElement {
       });
     }
 
+    // Horizon select
+    const horizonSelect = this.shadowRoot.getElementById("horizon-select");
     if (horizonSelect) {
       horizonSelect.addEventListener("change", (e) => {
         const val = parseInt(e.target.value, 10);
@@ -296,128 +346,6 @@ class MeteoClubPanel extends HTMLElement {
           this._loadChartData();
         }
       });
-    }
-
-    // Create and configure the date range picker programmatically
-    if (dateRangeContainer) {
-      this._setupDateRangePicker(dateRangeContainer);
-    }
-  }
-
-  _setupDateRangePicker(container) {
-    // Check if the native HA custom element is available
-    const isAlreadyDefined = customElements.get("ha-date-range-picker");
-    
-    const createPicker = () => {
-      // Create the native HA element
-      const picker = document.createElement("ha-date-range-picker");
-      picker.id = "date-range-picker";
-      picker.setAttribute("extended-presets", "");
-      
-      // Add event listener before adding to DOM
-      picker.addEventListener("value-changed", (e) => {
-        const { startDate, endDate } = e.detail.value;
-        if (startDate && endDate) {
-          this._startDate = startDate;
-          this._endDate = endDate;
-          this._savePreferences();
-          this._loadChartData();
-        }
-      });
-      
-      // Clear container and add picker to DOM
-      container.innerHTML = "";
-      container.appendChild(picker);
-      this._dateRangePicker = picker;
-      
-      // Set properties AFTER adding to DOM
-      requestAnimationFrame(() => {
-        picker.hass = this._hass;
-        picker.startDate = this._startDate;
-        picker.endDate = this._endDate;
-      });
-    };
-    
-    // Fallback: create a styled date input with preset buttons
-    const createFallbackPicker = () => {
-      const wrapper = document.createElement("div");
-      wrapper.className = "date-picker-fallback";
-      
-      // Preset buttons
-      const presets = document.createElement("div");
-      presets.className = "date-presets";
-      
-      const presetOptions = [
-        { label: "7d", days: 7 },
-        { label: "14d", days: 14 },
-        { label: "30d", days: 30 },
-      ];
-      
-      presetOptions.forEach(opt => {
-        const btn = document.createElement("button");
-        btn.className = "preset-btn";
-        btn.textContent = opt.label;
-        btn.addEventListener("click", () => {
-          const now = new Date();
-          this._endDate = now;
-          this._startDate = new Date(now.getTime() - opt.days * 24 * 60 * 60 * 1000);
-          startInput.value = this._startDate.toISOString().split("T")[0];
-          endInput.value = this._endDate.toISOString().split("T")[0];
-          this._savePreferences();
-          this._loadChartData();
-        });
-        presets.appendChild(btn);
-      });
-      
-      // Date inputs
-      const inputsWrapper = document.createElement("div");
-      inputsWrapper.className = "date-inputs";
-      
-      const startInput = document.createElement("input");
-      startInput.type = "date";
-      startInput.id = "date-start";
-      startInput.value = this._startDate.toISOString().split("T")[0];
-      
-      const toLabel = document.createElement("span");
-      toLabel.textContent = "→";
-      toLabel.className = "date-separator";
-      
-      const endInput = document.createElement("input");
-      endInput.type = "date";
-      endInput.id = "date-end";
-      endInput.value = this._endDate.toISOString().split("T")[0];
-      
-      inputsWrapper.appendChild(startInput);
-      inputsWrapper.appendChild(toLabel);
-      inputsWrapper.appendChild(endInput);
-      
-      wrapper.appendChild(presets);
-      wrapper.appendChild(inputsWrapper);
-      
-      const onChange = () => {
-        const start = new Date(startInput.value);
-        const end = new Date(endInput.value);
-        if (!isNaN(start.getTime()) && !isNaN(end.getTime()) && start <= end) {
-          this._startDate = start;
-          this._endDate = end;
-          this._savePreferences();
-          this._loadChartData();
-        }
-      };
-      
-      startInput.addEventListener("change", onChange);
-      endInput.addEventListener("change", onChange);
-      
-      container.innerHTML = "";
-      container.appendChild(wrapper);
-    };
-    
-    if (isAlreadyDefined) {
-      createPicker();
-    } else {
-      // The native HA picker is lazy-loaded and not available in custom panels
-      // Use our styled fallback instead
-      createFallbackPicker();
     }
   }
 
@@ -538,8 +466,6 @@ class MeteoClubPanel extends HTMLElement {
     return `
       :host {
         display: block;
-        background: var(--primary-background-color, #fafafa);
-        min-height: 100vh;
         --mdc-theme-primary: var(--primary-color);
       }
 
@@ -548,19 +474,14 @@ class MeteoClubPanel extends HTMLElement {
         --mdc-theme-on-primary: var(--app-header-text-color, #fff);
       }
 
-      ha-top-app-bar-fixed span[slot="title"] {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-      }
-
-      .panel {
+      .content {
         padding: 16px;
         max-width: 1200px;
         margin: 0 auto;
         display: flex;
         flex-direction: column;
         gap: 16px;
+        background: var(--primary-background-color, #fafafa);
       }
 
       ha-card {
@@ -586,63 +507,12 @@ class MeteoClubPanel extends HTMLElement {
       }
 
       .control-group.date-range-group {
-        min-width: 250px;
+        min-width: 300px;
         flex-grow: 1;
       }
 
-      .control-group.date-range-group #date-range-container {
-        width: 100%;
-      }
-
       .control-group.date-range-group ha-date-range-picker {
-        --ha-date-range-picker-max-width: 100%;
         width: 100%;
-      }
-
-      .control-group.date-range-group input[type="date"] {
-        padding: 8px 12px;
-        font-size: 14px;
-        border: 1px solid var(--divider-color, #e0e0e0);
-        border-radius: 4px;
-        background: var(--card-background-color, #fff);
-        color: var(--primary-text-color, #212121);
-      }
-
-      .date-picker-fallback {
-        display: flex;
-        flex-direction: column;
-        gap: 8px;
-      }
-
-      .date-presets {
-        display: flex;
-        gap: 4px;
-      }
-
-      .preset-btn {
-        padding: 4px 12px;
-        font-size: 12px;
-        border: 1px solid var(--primary-color, #03a9f4);
-        border-radius: 16px;
-        background: transparent;
-        color: var(--primary-color, #03a9f4);
-        cursor: pointer;
-        transition: all 0.2s;
-      }
-
-      .preset-btn:hover {
-        background: var(--primary-color, #03a9f4);
-        color: white;
-      }
-
-      .date-inputs {
-        display: flex;
-        gap: 8px;
-        align-items: center;
-      }
-
-      .date-separator {
-        color: var(--secondary-text-color, #666);
       }
 
       .control-group label {
@@ -679,28 +549,6 @@ class MeteoClubPanel extends HTMLElement {
       .native-select:focus {
         border-color: var(--primary-color);
         box-shadow: 0 0 0 2px rgba(var(--rgb-primary-color, 33, 150, 243), 0.2);
-      }
-
-      .header-spinner {
-        margin-left: 12px;
-        --mdc-theme-primary: var(--app-header-text-color, #fff);
-      }
-
-      .loading-badge {
-        display: flex;
-        align-items: center;
-        gap: 8px;
-        padding: 8px 16px;
-        background: var(--primary-color);
-        color: white;
-        border-radius: 20px;
-        font-size: 13px;
-        font-weight: 500;
-        margin-left: auto;
-      }
-
-      .loading-badge ha-circular-progress {
-        --mdc-theme-primary: white;
       }
 
       .chart-container {
