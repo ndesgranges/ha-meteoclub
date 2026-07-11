@@ -1,15 +1,7 @@
 /**
  * MeteoClub Weather Dashboard Panel
- * Version: 5.4.0 - Clickable legend with loading spinners
  *
  * A custom Home Assistant panel that displays weather model accuracy comparison.
- * Uses Home Assistant's native ha-chart-base component with ECharts for proper
- * styling, interactions, and the built-in legend with checkboxes to toggle series.
- *
- * Loading Strategy:
- * - Observations load first and chart displays immediately
- * - Each model's forecast loads in parallel and is added to chart as it completes
- * - Clickable legend below chart with spinner animation while loading
  */
 
 const PANEL_NAME = "meteoclub-panel";
@@ -37,6 +29,7 @@ class MeteoClubPanel extends HTMLElement {
     this._loading = false;
     this._allModels = [];
     this._componentsLoaded = false;
+    this._translations = {};  // Loaded via HTTP
 
     // Incremental loading state
     this._observations = null;
@@ -76,6 +69,39 @@ class MeteoClubPanel extends HTMLElement {
       }));
     } catch (e) {
       // Ignore storage errors
+    }
+  }
+
+  // Translation helper
+  _t(key, replacements = {}) {
+    let text = this._translations[key] || key;
+
+    // Replace placeholders like {horizon}
+    for (const [k, v] of Object.entries(replacements)) {
+      text = text.replace(`{${k}}`, v);
+    }
+    return text;
+  }
+
+  // Translate metric name
+  _translateMetric(metricId, fallback) {
+    return this._translations.metrics?.[metricId] || fallback || metricId;
+  }
+
+  // Load translations from server
+  async _loadTranslations() {
+    const lang = this._hass?.language || "en";
+    try {
+      let response = await fetch(`/meteoclub/translations/${lang}.json`);
+      if (!response.ok && lang !== "en") {
+        response = await fetch("/meteoclub/translations/en.json");
+      }
+      if (response.ok) {
+        const data = await response.json();
+        this._translations = data.panel || {};
+      }
+    } catch (e) {
+      console.warn("MeteoClub: Could not load translations", e);
     }
   }
 
@@ -142,8 +168,9 @@ class MeteoClubPanel extends HTMLElement {
 
       this._savePreferences();
 
-      // Wait for HA components to be defined before rendering
+      // Wait for HA components and translations before rendering
       await this._ensureComponentsLoaded();
+      await this._loadTranslations();
       this._render();
 
       // Load initial chart data
@@ -152,7 +179,7 @@ class MeteoClubPanel extends HTMLElement {
       }
     } catch (err) {
       console.error("Failed to load MeteoClub config:", err);
-      this._renderError("Failed to load configuration");
+      this._renderError(this._t('error_config'));
     }
   }
 
@@ -297,7 +324,7 @@ class MeteoClubPanel extends HTMLElement {
       chartEl.innerHTML = `
         <div class="loading-overlay">
           <ha-circular-progress indeterminate></ha-circular-progress>
-          <span class="loading-text">Loading observations...</span>
+          <span class="loading-text">${this._t('loading_observations')}</span>
         </div>
       `;
     }
@@ -331,7 +358,7 @@ class MeteoClubPanel extends HTMLElement {
     statusContainer.innerHTML = `
       <div class="legend-item ${obsVisible ? '' : 'disabled'} ${obsLoading ? 'loading' : ''}" data-series="observation">
         <span class="legend-indicator" style="--color: ${COLORS.observation}"></span>
-        <span class="legend-label">Observations</span>
+        <span class="legend-label">${this._t('observations')}</span>
       </div>
       ${html}
     `;
@@ -363,37 +390,39 @@ class MeteoClubPanel extends HTMLElement {
     // Note: ha-date-range-picker is added programmatically to ensure hass is set BEFORE
     // the element is added to DOM. This prevents "this.hass is undefined" errors in Lit's willUpdate.
     // Content goes INSIDE ha-top-app-bar-fixed (in default slot)
+    const horizonText = `${this._selectedHorizon} ${this._selectedHorizon > 1 ? this._t('days') : this._t('day')}`;
+
     this.shadowRoot.innerHTML = `
       <style>${this._getStyles()}</style>
       <ha-top-app-bar-fixed>
-        <span slot="title">MeteoClub</span>
+        <span slot="title">${this._t('title')}</span>
 
         <div class="content">
           <ha-card>
             <div class="card-content controls">
               <div class="control-group date-range-group">
-                <label>Date Range</label>
+                <label>${this._t('date_range')}</label>
                 <div id="date-range-picker-container"></div>
               </div>
 
               <div class="control-group">
-                <label>City</label>
+                <label>${this._t('city')}</label>
                 <select id="city-select" class="native-select">
                   ${this._cities.map(c => `<option value="${c.id}" ${c.id === this._selectedCity ? "selected" : ""}>${c.name}</option>`).join("")}
                 </select>
               </div>
 
               <div class="control-group">
-                <label>Metric</label>
+                <label>${this._t('metric')}</label>
                 <select id="metric-select" class="native-select">
-                  ${this._config.metrics.map(m => `<option value="${m.id}" ${m.id === this._selectedMetric ? "selected" : ""}>${m.name}</option>`).join("")}
+                  ${this._config.metrics.map(m => `<option value="${m.id}" ${m.id === this._selectedMetric ? "selected" : ""}>${this._translateMetric(m.id, m.name)}</option>`).join("")}
                 </select>
               </div>
 
               <div class="control-group">
-                <label>Forecast Horizon</label>
+                <label>${this._t('forecast_horizon')}</label>
                 <select id="horizon-select" class="native-select">
-                  ${this._config.horizons.map(h => `<option value="${h}" ${h === this._selectedHorizon ? "selected" : ""}>${h} day${h > 1 ? "s" : ""}</option>`).join("")}
+                  ${this._config.horizons.map(h => `<option value="${h}" ${h === this._selectedHorizon ? "selected" : ""}>${h} ${h > 1 ? this._t('days') : this._t('day')}</option>`).join("")}
                 </select>
               </div>
 
@@ -404,7 +433,7 @@ class MeteoClubPanel extends HTMLElement {
           <ha-card>
             <div class="card-content chart-card-content">
               <div class="chart-container" id="chart">
-                <div class="chart-placeholder">Select a city to display the chart</div>
+                <div class="chart-placeholder">${this._t('select_city')}</div>
               </div>
               <div class="legend-panel" id="model-status">
                 <!-- Legend items will be injected here -->
@@ -416,8 +445,7 @@ class MeteoClubPanel extends HTMLElement {
             <div class="card-content">
               <p>
                 <ha-icon icon="mdi:information-outline"></ha-icon>
-                Dashed lines show what each model predicted, based on forecasts made
-                <strong>${this._selectedHorizon} day${this._selectedHorizon > 1 ? "s" : ""}</strong> in advance.
+                ${this._t('info_text', { horizon: `<strong>${horizonText}</strong>` })}
               </p>
             </div>
           </ha-card>
@@ -523,7 +551,7 @@ class MeteoClubPanel extends HTMLElement {
     if (!chartContainer || !this._observations) return;
 
     if (this._observations.length === 0) {
-      chartContainer.innerHTML = `<div class="chart-placeholder">No observation data available for the selected period</div>`;
+      chartContainer.innerHTML = `<div class="chart-placeholder">${this._t('no_data')}</div>`;
       return;
     }
 
@@ -537,7 +565,7 @@ class MeteoClubPanel extends HTMLElement {
     if (obsVisible) {
       seriesData.push({
         id: obsId,
-        name: "Observation",
+        name: this._t('observation'),
         type: "line",
         data: this._observations.map((o) => [new Date(o.time).getTime(), o.value]),
         smooth: true,
@@ -548,7 +576,7 @@ class MeteoClubPanel extends HTMLElement {
         emphasis: { focus: "series" },
       });
     }
-    legendData.push({ id: obsId, name: "Observation" });
+    legendData.push({ id: obsId, name: this._t('observation') });
 
     // Forecast series (dashed lines) - only add if visible and loaded
     for (const modelConfig of this._config.models) {
@@ -585,7 +613,7 @@ class MeteoClubPanel extends HTMLElement {
       },
       yAxis: {
         type: "value",
-        name: this._metric ? `${this._metric.name} (${this._metric.unit})` : '',
+        name: this._metric ? `${this._translateMetric(this._metric.id, this._metric.name)} (${this._metric.unit})` : '',
         nameLocation: "middle",
         nameGap: 50,
         scale: true,  // Auto-scale based on data, don't force include 0

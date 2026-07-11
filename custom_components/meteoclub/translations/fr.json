@@ -20,5 +20,29 @@
     "abort": {
       "already_configured": "Ce compte est déjà configuré."
     }
+  },
+  "panel": {
+    "title": "MeteoClub",
+    "date_range": "Période",
+    "city": "Ville",
+    "metric": "Métrique",
+    "forecast_horizon": "Horizon de prévision",
+    "day": "jour",
+    "days": "jours",
+    "observations": "Observations",
+    "observation": "Observation",
+    "loading_observations": "Chargement des observations...",
+    "select_city": "Sélectionnez une ville pour afficher le graphique",
+    "no_data": "Aucune donnée d'observation disponible pour la période sélectionnée",
+    "info_text": "Les lignes pointillées montrent ce que chaque modèle a prédit, basé sur des prévisions faites {horizon} à l'avance.",
+    "error_config": "Échec du chargement de la configuration",
+    "metrics": {
+      "temperature": "Température",
+      "humidity": "Humidité",
+      "pressure": "Pression",
+      "wind_speed": "Vitesse du vent",
+      "precipitation": "Précipitations",
+      "cloud_cover": "Couverture nuageuse"
+    }
   }
 }

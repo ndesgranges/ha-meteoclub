@@ -93,17 +93,23 @@ async def _async_register_panel(hass: HomeAssistant) -> None:
     if PANEL_NAME in hass.data.get("frontend_panels", {}):
         return
 
-    # Path to our frontend files
+    # Path to our files
     frontend_path = Path(__file__).parent / "frontend"
+    translations_path = Path(__file__).parent / "translations"
 
-    # Register static path for serving the JS file
+    # Register static paths for JS and translation files
     await hass.http.async_register_static_paths(
         [
             StaticPathConfig(
                 url_path=f"/{DOMAIN}/frontend",
                 path=str(frontend_path),
                 cache_headers=False,
-            )
+            ),
+            StaticPathConfig(
+                url_path=f"/{DOMAIN}/translations",
+                path=str(translations_path),
+                cache_headers=True,
+            ),
         ]
     )
 
