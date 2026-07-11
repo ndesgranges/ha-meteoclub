@@ -13,4 +13,4 @@ Home Assistant dev environment ready.
 
 To start Home Assistant, run:
 
-   ./scripts/develop"
+  ./scripts/develop"

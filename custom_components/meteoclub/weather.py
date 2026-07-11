@@ -32,60 +32,60 @@ from .coordinator import MeteoClubCoordinator
 
 def map_condition(raw_condition: str | None) -> str | None:
     """Map MeteoClub/meteociel condition strings to HA conditions.
-    
+
     HA conditions: clear-night, cloudy, fog, hail, lightning, lightning-rainy,
     partlycloudy, pouring, rainy, snowy, snowy-rainy, sunny, windy, windy-variant,
     exceptional
     """
     if not raw_condition:
         return None
-    
+
     condition = raw_condition.lower()
-    
+
     # Sun/Clear
     if any(x in condition for x in ["soleil", "sunny", "clear", "ensoleill", "beau"]):
         return "sunny"
-    
+
     # Partly cloudy
     if any(x in condition for x in ["partiellement", "partly", "éclaircies", "voilé", "peu nuageux"]):
         return "partlycloudy"
-    
+
     # Cloudy/Overcast
     if any(x in condition for x in ["nuageux", "couvert", "cloudy", "overcast", "gris"]):
         return "cloudy"
-    
+
     # Fog/Mist
     if any(x in condition for x in ["brouillard", "brume", "fog", "mist"]):
         return "fog"
-    
+
     # Thunderstorm
     if any(x in condition for x in ["orage", "thunder", "storm", "éclair"]):
         return "lightning-rainy"
-    
+
     # Heavy rain
     if any(x in condition for x in ["forte pluie", "heavy rain", "averse", "déluge", "pouring"]):
         return "pouring"
-    
+
     # Rain
     if any(x in condition for x in ["pluie", "rain", "pluvieux", "bruine", "drizzle"]):
         return "rainy"
-    
+
     # Snow
     if any(x in condition for x in ["neige", "snow"]):
         return "snowy"
-    
+
     # Sleet
     if any(x in condition for x in ["verglas", "sleet", "pluie et neige", "neige fondue"]):
         return "snowy-rainy"
-    
+
     # Hail
     if any(x in condition for x in ["grêle", "hail"]):
         return "hail"
-    
+
     # Wind
     if any(x in condition for x in ["vent", "wind"]):
         return "windy"
-    
+
     # Default: return None to let HA show unknown
     return None
 
@@ -262,29 +262,29 @@ class MeteoClubWeather(CoordinatorEntity[MeteoClubCoordinator], WeatherEntity):
         result: list[Forecast] = []
         for date_key in sorted(daily_data.keys()):
             day_forecasts = daily_data[date_key]
-            
+
             # Calculate min/max temperatures from all forecasts of the day
             temps = [
-                f["fc"].get("temperature") 
-                for f in day_forecasts 
+                f["fc"].get("temperature")
+                for f in day_forecasts
                 if f["fc"].get("temperature") is not None
             ]
             temp_max = max(temps) if temps else None
             temp_min = min(temps) if temps else None
-            
+
             # Sum precipitation for the day
             precip_total = sum(
-                f["fc"].get("precipitation_mm") or 0 
+                f["fc"].get("precipitation_mm") or 0
                 for f in day_forecasts
             )
-            
+
             # Pick noon forecast for other fields (condition, humidity, wind)
             # Fallback to first forecast if no noon available
             noon_fc = next(
                 (f["fc"] for f in day_forecasts if 11 <= f["hour"] <= 13),
                 day_forecasts[0]["fc"]
             )
-            
+
             forecast: Forecast = {
                 "datetime": f"{date_key}T12:00:00Z",
                 "native_temperature": temp_max,

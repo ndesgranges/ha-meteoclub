@@ -36,4 +36,4 @@ export FAKETIME="+0d"
 
 Sometimes, this might create errors in Home assistant, so removing
 temporarily `LD_PRELOAD` in `.devocontainer` and rebooting the container
-hen stuck on a issue can be a good thing to try !
+en stuck on a issue can be a good thing to try !

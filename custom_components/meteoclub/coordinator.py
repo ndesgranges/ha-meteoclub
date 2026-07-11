@@ -56,12 +56,12 @@ class MeteoClubCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             # Get forecasts for weather entity (next 7 days)
             now = datetime.now(timezone.utc)
             forecast_end = now + timedelta(days=7)
-            
+
             # Fetch GFS for daily and ICON_EU for hourly forecasts
             # all_versions=False to get only the latest forecast per time slot
             gfs_forecasts = []
             icon_forecasts = []
-            
+
             try:
                 gfs_data = await self.api.get_forecasts(
                     self.city_id,
@@ -73,7 +73,7 @@ class MeteoClubCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 gfs_forecasts = gfs_data.get("forecasts", []) if gfs_data else []
             except Exception as err:
                 _LOGGER.warning("Failed to fetch GFS forecasts: %s", err)
-            
+
             try:
                 icon_data = await self.api.get_forecasts(
                     self.city_id,

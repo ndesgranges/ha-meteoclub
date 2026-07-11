@@ -605,7 +605,21 @@ class MeteoClubPanel extends HTMLElement {
     }
 
     // Chart options
+    const isMobile = window.innerWidth <= 600;
+    const chartHeight = isMobile ? Math.max(350, Math.floor(window.innerHeight * 0.55)) : 400;
+
     const chartOptions = {
+      animation: true,
+      animationDuration: 1000,
+      animationEasing: "cubicOut",
+      animationDelay: (idx) => idx * 10,
+      grid: {
+        top: "5%",
+        right: "3%",
+        bottom: "12%",
+        left: "12%",
+        containLabel: false,
+      },
       xAxis: {
         type: "time",
         min: new Date(this._observations[0].time),
@@ -615,7 +629,7 @@ class MeteoClubPanel extends HTMLElement {
         type: "value",
         name: this._metric ? `${this._translateMetric(this._metric.id, this._metric.name)} (${this._metric.unit})` : '',
         nameLocation: "middle",
-        nameGap: 50,
+        nameGap: isMobile ? 30 : 50,
         scale: true,  // Auto-scale based on data, don't force include 0
       },
       legend: {
@@ -626,15 +640,29 @@ class MeteoClubPanel extends HTMLElement {
       },
     };
 
-    // Clear container and create ha-chart-base
+    // Clear container and set explicit height
     chartContainer.innerHTML = "";
+    chartContainer.style.height = `${chartHeight}px`;
 
     const chartEl = document.createElement("ha-chart-base");
     chartEl.hass = this._hass;
     chartEl.data = seriesData;
     chartEl.options = chartOptions;
-    chartEl.style.height = "400px";
+
+    // Set height as property and style - ha-chart-base needs explicit height
+    chartEl.height = chartHeight;
+    chartEl.chartHeight = chartHeight;
+    chartEl.style.cssText = `display: block; width: 100%; height: ${chartHeight}px;`;
+    chartEl.setAttribute("chart-height", chartHeight);
+
     chartContainer.appendChild(chartEl);
+
+    // Resize after render - delay to allow animation to start
+    setTimeout(() => {
+      if (chartEl.chart) {
+        chartEl.chart.resize({ height: chartHeight, animation: { duration: 0 } });
+      }
+    }, 50);
   }
 
   _renderError(message) {
@@ -745,14 +773,12 @@ class MeteoClubPanel extends HTMLElement {
       }
 
       .chart-container {
-        min-height: 400px;
         position: relative;
       }
 
       .chart-container ha-chart-base {
         display: block;
         width: 100%;
-        height: 400px;
       }
 
       .legend-panel {
@@ -880,6 +906,18 @@ class MeteoClubPanel extends HTMLElement {
       }
 
       @media (max-width: 600px) {
+        .content {
+          padding: 8px;
+        }
+
+        .card-content {
+          padding: 12px;
+        }
+
+        .chart-card-content {
+          padding: 12px;
+        }
+
         .controls {
           flex-direction: column;
           align-items: stretch;
@@ -887,6 +925,11 @@ class MeteoClubPanel extends HTMLElement {
 
         .control-group {
           width: 100%;
+          min-width: unset;
+        }
+
+        .control-group.date-range-group {
+          min-width: unset;
         }
 
         .native-select {

@@ -1,2 +1,2 @@
 homeassistant
-pylint>=4.0.5
+ylint>=4.0.5
