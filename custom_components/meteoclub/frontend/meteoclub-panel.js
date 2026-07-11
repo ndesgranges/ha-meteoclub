@@ -1,15 +1,15 @@
 /**
  * MeteoClub Weather Dashboard Panel
- * Version: 5.2.0 - Native HA components with proper lazy-loading support
+ * Version: 5.4.0 - Clickable legend with loading spinners
  *
  * A custom Home Assistant panel that displays weather model accuracy comparison.
  * Uses Home Assistant's native ha-chart-base component with ECharts for proper
  * styling, interactions, and the built-in legend with checkboxes to toggle series.
  *
- * Component Loading Strategy:
- * - ha-top-app-bar-fixed and ha-date-range-picker are lazy-loaded by HA
- * - We trigger loading by accessing partial-panel-resolver's routes
- * - ha-date-range-picker is created programmatically to set hass BEFORE DOM insertion
+ * Loading Strategy:
+ * - Observations load first and chart displays immediately
+ * - Each model's forecast loads in parallel and is added to chart as it completes
+ * - Clickable legend below chart with spinner animation while loading
  */
 
 const PANEL_NAME = "meteoclub-panel";
@@ -37,6 +37,14 @@ class MeteoClubPanel extends HTMLElement {
     this._loading = false;
     this._allModels = [];
     this._componentsLoaded = false;
+
+    // Incremental loading state
+    this._observations = null;
+    this._forecasts = {};
+    this._metric = null;
+    this._modelLoadingState = {};  // { modelId: 'loading' | 'loaded' | 'error' }
+    this._loadGeneration = 0;  // Increments on each load to ignore stale responses
+    this._seriesVisibility = {};  // { seriesId: true/false } for toggling curves
 
     const saved = this._loadPreferences();
     this._selectedCity = saved.city || null;
@@ -193,31 +201,94 @@ class MeteoClubPanel extends HTMLElement {
   }
 
   async _loadChartData() {
-    if (!this._selectedCity || !this._hass || this._loading) return;
+    if (!this._selectedCity || !this._hass) return;
 
+    // Increment generation to invalidate any in-flight requests
+    const currentGeneration = ++this._loadGeneration;
+
+    // Reset state for new load
     this._loading = true;
-    this._renderLoadingState();
+    this._observations = null;
+    this._forecasts = {};
+    this._metric = null;
+    this._modelLoadingState = {};
 
+    // Initialize all models as 'loading'
+    for (const model of this._allModels) {
+      this._modelLoadingState[model] = 'loading';
+    }
+
+    this._renderLoadingState();
+    this._updateModelStatusUI();
+
+    // Step 1: Load observations first (with empty models array)
     try {
-      const result = await this._hass.callWS({
+      const obsResult = await this._hass.callWS({
         type: "meteoclub/chart_data",
         city_id: this._selectedCity,
         metric: this._selectedMetric,
         horizon_days: this._selectedHorizon,
-        models: this._allModels || ["gfs", "arome"],
+        models: [],  // No models - just observations
         start_date: this._startDate.toISOString(),
         end_date: this._endDate.toISOString(),
       });
 
-      this._chartData = result;
-      this._loading = false;
-      this._render();
-      this._renderChart();
+      // Ignore if a newer load has started
+      if (currentGeneration !== this._loadGeneration) return;
+
+      this._observations = obsResult.observations || [];
+      this._metric = obsResult.metric;
+
+      // Render chart with just observations
+      if (this._observations.length > 0) {
+        this._renderChart();
+        this._updateModelStatusUI();
+      }
     } catch (err) {
-      console.error("Failed to load chart data:", err);
+      console.error("Failed to load observations:", err);
+      if (currentGeneration !== this._loadGeneration) return;
       this._loading = false;
       this._render();
+      return;
     }
+
+    // Step 2: Load each model in parallel
+    const modelPromises = this._allModels.map(async (modelId) => {
+      try {
+        const result = await this._hass.callWS({
+          type: "meteoclub/chart_data",
+          city_id: this._selectedCity,
+          metric: this._selectedMetric,
+          horizon_days: this._selectedHorizon,
+          models: [modelId],  // Single model
+          start_date: this._startDate.toISOString(),
+          end_date: this._endDate.toISOString(),
+        });
+
+        // Ignore if a newer load has started
+        if (currentGeneration !== this._loadGeneration) return;
+
+        // Store forecast data for this model
+        this._forecasts[modelId] = result.forecasts?.[modelId] || [];
+        this._modelLoadingState[modelId] = 'loaded';
+
+        // Update UI immediately when this model completes
+        this._updateModelStatusUI();
+        this._renderChart();
+      } catch (err) {
+        console.error(`Failed to load forecast for ${modelId}:`, err);
+        if (currentGeneration !== this._loadGeneration) return;
+        this._modelLoadingState[modelId] = 'error';
+        this._updateModelStatusUI();
+      }
+    });
+
+    // Wait for all models to complete
+    await Promise.all(modelPromises);
+
+    if (currentGeneration !== this._loadGeneration) return;
+    this._loading = false;
+    this._updateModelStatusUI();
   }
 
   _renderLoadingState() {
@@ -226,11 +297,58 @@ class MeteoClubPanel extends HTMLElement {
       chartEl.innerHTML = `
         <div class="loading-overlay">
           <ha-circular-progress indeterminate></ha-circular-progress>
-          <span class="loading-text">Loading forecast data...</span>
-          <span class="loading-subtext">This may take a moment for large datasets</span>
+          <span class="loading-text">Loading observations...</span>
         </div>
       `;
     }
+  }
+
+  _updateModelStatusUI() {
+    const statusContainer = this.shadowRoot.getElementById("model-status");
+    if (!statusContainer || !this._config?.models) return;
+
+    const html = this._config.models.map(model => {
+      const state = this._modelLoadingState[model.id] || 'pending';
+      const color = COLORS[model.id] || '#888';
+      const seriesId = `forecast-${model.id}`;
+      const isVisible = this._seriesVisibility[seriesId] !== false;
+      const isLoading = state === 'loading' || state === 'pending';
+
+      return `
+        <div class="legend-item ${isVisible ? '' : 'disabled'} ${isLoading ? 'loading' : ''}" data-series="${seriesId}">
+          <span class="legend-indicator" style="--color: ${color}">
+            ${isLoading ? '' : ''}
+          </span>
+          <span class="legend-label">${model.name}</span>
+        </div>
+      `;
+    }).join('');
+
+    // Add observation at the start
+    const obsLoading = !this._observations;
+    const obsVisible = this._seriesVisibility['observation'] !== false;
+
+    statusContainer.innerHTML = `
+      <div class="legend-item ${obsVisible ? '' : 'disabled'} ${obsLoading ? 'loading' : ''}" data-series="observation">
+        <span class="legend-indicator" style="--color: ${COLORS.observation}"></span>
+        <span class="legend-label">Observations</span>
+      </div>
+      ${html}
+    `;
+
+    // Add click listeners for toggling
+    statusContainer.querySelectorAll('.legend-item').forEach(item => {
+      item.addEventListener('click', () => this._toggleSeries(item.dataset.series));
+    });
+  }
+
+  _toggleSeries(seriesId) {
+    // Toggle visibility
+    this._seriesVisibility[seriesId] = this._seriesVisibility[seriesId] === false ? true : false;
+
+    // Re-render chart and legend
+    this._updateModelStatusUI();
+    this._renderChart();
   }
 
   _render() {
@@ -284,9 +402,12 @@ class MeteoClubPanel extends HTMLElement {
           </ha-card>
 
           <ha-card>
-            <div class="card-content">
+            <div class="card-content chart-card-content">
               <div class="chart-container" id="chart">
                 <div class="chart-placeholder">Select a city to display the chart</div>
+              </div>
+              <div class="legend-panel" id="model-status">
+                <!-- Legend items will be injected here -->
               </div>
             </div>
           </ha-card>
@@ -379,88 +500,97 @@ class MeteoClubPanel extends HTMLElement {
         }
       });
     }
+
+    // Initialize model status panel with pending state
+    this._initializeModelStatusUI();
+  }
+
+  _initializeModelStatusUI() {
+    const statusContainer = this.shadowRoot.getElementById("model-status");
+    if (!statusContainer || !this._config?.models) return;
+
+    // Initialize visibility - all visible by default
+    this._seriesVisibility['observation'] = true;
+    this._config.models.forEach(model => {
+      this._seriesVisibility[`forecast-${model.id}`] = true;
+    });
+
+    this._updateModelStatusUI();
   }
 
   _renderChart() {
     const chartContainer = this.shadowRoot.getElementById("chart");
-    if (!chartContainer || !this._chartData) return;
+    if (!chartContainer || !this._observations) return;
 
-    const { observations, forecasts, metric } = this._chartData;
-
-    if (!observations || observations.length === 0) {
+    if (this._observations.length === 0) {
       chartContainer.innerHTML = `<div class="chart-placeholder">No observation data available for the selected period</div>`;
       return;
     }
 
     // Prepare series data for ha-chart-base (ECharts format)
-    // ha-chart-base expects: data = array of series, options = chart config
     const seriesData = [];
     const legendData = [];
 
-    // Observation series (solid line)
+    // Observation series (solid line) - only if visible
     const obsId = "observation";
-    seriesData.push({
-      id: obsId,
-      name: "Observation",
-      type: "line",
-      data: observations.map((o) => [new Date(o.time).getTime(), o.value]),
-      smooth: true,
-      symbol: "circle",
-      symbolSize: 4,
-      lineStyle: {
-        width: 2,
-      },
-      color: COLORS.observation,
-      emphasis: {
-        focus: "series",
-      },
-    });
+    const obsVisible = this._seriesVisibility[obsId] !== false;
+    if (obsVisible) {
+      seriesData.push({
+        id: obsId,
+        name: "Observation",
+        type: "line",
+        data: this._observations.map((o) => [new Date(o.time).getTime(), o.value]),
+        smooth: true,
+        symbol: "circle",
+        symbolSize: 4,
+        lineStyle: { width: 2 },
+        color: COLORS.observation,
+        emphasis: { focus: "series" },
+      });
+    }
     legendData.push({ id: obsId, name: "Observation" });
 
-    // Forecast series (dashed lines) - add ALL configured models
+    // Forecast series (dashed lines) - only add if visible and loaded
     for (const modelConfig of this._config.models) {
       const model = modelConfig.id;
       const modelName = modelConfig.name;
-      const data = forecasts[model] || [];
+      const data = this._forecasts[model];
       const color = COLORS[model] || "#888";
       const seriesId = `forecast-${model}`;
+      const isVisible = this._seriesVisibility[seriesId] !== false;
 
-      seriesData.push({
-        id: seriesId,
-        name: modelName,
-        type: "line",
-        data: data.map((f) => [new Date(f.time).getTime(), f.value]),
-        smooth: true,
-        symbol: "none",
-        lineStyle: {
-          width: 2,
-          type: "dashed",
-        },
-        color: color,
-        emphasis: {
-          focus: "series",
-        },
-      });
+      // Only add series if visible and data has been loaded
+      if (isVisible && data && data.length > 0) {
+        seriesData.push({
+          id: seriesId,
+          name: modelName,
+          type: "line",
+          data: data.map((f) => [new Date(f.time).getTime(), f.value]),
+          smooth: true,
+          symbol: "none",
+          lineStyle: { width: 2, type: "dashed" },
+          color: color,
+          emphasis: { focus: "series" },
+        });
+      }
       legendData.push({ id: seriesId, name: modelName });
     }
 
-    // Chart options for ha-chart-base (without series - that goes in data prop)
+    // Chart options
     const chartOptions = {
       xAxis: {
         type: "time",
-        min: new Date(observations[0].time),
-        max: new Date(observations[observations.length - 1].time),
+        min: new Date(this._observations[0].time),
+        max: new Date(this._observations[this._observations.length - 1].time),
       },
       yAxis: {
         type: "value",
-        name: `${metric.name} (${metric.unit})`,
+        name: this._metric ? `${this._metric.name} (${this._metric.unit})` : '',
         nameLocation: "middle",
         nameGap: 50,
       },
       legend: {
-        show: true,
-        type: "custom",
-        data: legendData,
+        show: false,  // We use our own legend
       },
       tooltip: {
         trigger: "axis",
@@ -581,6 +711,10 @@ class MeteoClubPanel extends HTMLElement {
         box-shadow: 0 0 0 2px rgba(var(--rgb-primary-color, 33, 150, 243), 0.2);
       }
 
+      .chart-card-content {
+        padding: 16px;
+      }
+
       .chart-container {
         min-height: 400px;
         position: relative;
@@ -590,6 +724,69 @@ class MeteoClubPanel extends HTMLElement {
         display: block;
         width: 100%;
         height: 400px;
+      }
+
+      .legend-panel {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 16px;
+        padding-top: 16px;
+        border-top: 1px solid var(--divider-color, #e0e0e0);
+        justify-content: center;
+      }
+
+      .legend-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 12px;
+        border-radius: 16px;
+        background: var(--secondary-background-color, #f5f5f5);
+        font-size: 13px;
+        cursor: pointer;
+        user-select: none;
+        transition: opacity 0.2s, background 0.2s;
+      }
+
+      .legend-item:hover {
+        background: var(--divider-color, #e0e0e0);
+      }
+
+      .legend-item.disabled {
+        opacity: 0.4;
+      }
+
+      .legend-item.disabled .legend-indicator {
+        background: var(--disabled-color, #bdbdbd) !important;
+      }
+
+      .legend-indicator {
+        width: 12px;
+        height: 12px;
+        border-radius: 50%;
+        background: var(--color);
+        flex-shrink: 0;
+        box-sizing: border-box;
+      }
+
+      /* Spinner animation when loading */
+      .legend-item.loading .legend-indicator {
+        background: transparent;
+        border: 2px solid var(--divider-color, #e0e0e0);
+        border-top-color: var(--color);
+        animation: legend-spin 0.8s linear infinite;
+      }
+
+      @keyframes legend-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      .legend-label {
+        color: var(--primary-text-color, #212121);
+        white-space: nowrap;
       }
 
       .chart-placeholder {
@@ -647,9 +844,6 @@ class MeteoClubPanel extends HTMLElement {
         align-items: center;
         justify-content: center;
         gap: 12px;
-        min-height: 200px;
-        font-size: 16px;
-        color: var(--secondary-text-color, #666);
       }
 
       .error {
@@ -668,6 +862,15 @@ class MeteoClubPanel extends HTMLElement {
 
         .native-select {
           width: 100%;
+        }
+
+        .legend-panel {
+          justify-content: center;
+        }
+
+        .legend-item {
+          padding: 4px 10px;
+          font-size: 12px;
         }
       }
     `;
