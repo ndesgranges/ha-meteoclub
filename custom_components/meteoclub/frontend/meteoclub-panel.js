@@ -443,9 +443,9 @@ class MeteoClubPanel extends HTMLElement {
 
           <ha-card class="info-card">
             <div class="card-content">
-              <p>
+              <p id="info-text">
                 <ha-icon icon="mdi:information-outline"></ha-icon>
-                ${this._selectedHorizon === 0 ? this._t('info_text_latest') : this._t('info_text', { horizon: `<strong>${horizonText}</strong>` })}
+                <span>${this._selectedHorizon === 0 ? this._t('info_text_latest') : this._t('info_text', { horizon: `<strong>${horizonText}</strong>` })}</span>
               </p>
             </div>
           </ha-card>
@@ -475,6 +475,7 @@ class MeteoClubPanel extends HTMLElement {
         dateRangePicker.startDate = this._startDate;
         dateRangePicker.endDate = this._endDate;
         dateRangePicker.setAttribute("extended-presets", "");
+        dateRangePicker.timePicker = true;  // Enable time selection
 
         dateRangePicker.addEventListener("value-changed", (e) => {
           const { startDate, endDate } = e.detail.value;
@@ -482,6 +483,11 @@ class MeteoClubPanel extends HTMLElement {
             this._startDate = startDate;
             this._endDate = endDate;
             this._savePreferences();
+
+            // Explicitly update the picker's properties to refresh its display
+            dateRangePicker.startDate = startDate;
+            dateRangePicker.endDate = endDate;
+
             this._loadChartData();
           }
         });
@@ -524,6 +530,7 @@ class MeteoClubPanel extends HTMLElement {
         if (!isNaN(val) && val !== this._selectedHorizon) {
           this._selectedHorizon = val;
           this._savePreferences();
+          this._updateInfoText();
           this._loadChartData();
         }
       });
@@ -544,6 +551,19 @@ class MeteoClubPanel extends HTMLElement {
     });
 
     this._updateModelStatusUI();
+  }
+
+  _updateInfoText() {
+    const infoText = this.shadowRoot.getElementById("info-text");
+    if (!infoText) return;
+
+    const horizonText = this._selectedHorizon === 0 ? this._t('latest') : `${this._selectedHorizon} ${this._selectedHorizon > 1 ? this._t('days') : this._t('day')}`;
+    const span = infoText.querySelector("span");
+    if (span) {
+      span.innerHTML = this._selectedHorizon === 0 
+        ? this._t('info_text_latest') 
+        : this._t('info_text', { horizon: `<strong>${horizonText}</strong>` });
+    }
   }
 
   _renderChart() {
@@ -622,8 +642,8 @@ class MeteoClubPanel extends HTMLElement {
       },
       xAxis: {
         type: "time",
-        min: new Date(this._observations[0].time),
-        max: new Date(this._observations[this._observations.length - 1].time),
+        min: this._startDate,
+        max: this._endDate,
       },
       yAxis: {
         type: "value",

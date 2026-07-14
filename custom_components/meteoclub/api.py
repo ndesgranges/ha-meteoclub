@@ -184,12 +184,14 @@ class MeteoClubApi:
         all_versions: bool = True,
         start_date: str | None = None,
         end_date: str | None = None,
+        issued_start_date: str | None = None,
+        issued_end_date: str | None = None,
         page_size: int = 200,
     ) -> dict[str, Any]:
         """Get forecasts for a city with automatic pagination.
 
         Fetches all pages of forecasts and returns them combined.
-        Uses pagination to avoid large responses that may cause connection issues.
+        Uses parallel pagination after first page for better performance.
 
         Args:
             city_id: The city ID to get forecasts for.
@@ -197,19 +199,18 @@ class MeteoClubApi:
             all_versions: If True, returns all historical forecast versions.
                          If False, returns only the latest forecast for each time slot.
                          Default True for dashboard comparison needs.
-            start_date: Optional ISO date string to filter forecasts from this date.
-            end_date: Optional ISO date string to filter forecasts until this date.
+            start_date: Filter forecasts where forecast_for >= start_date (ISO format).
+            end_date: Filter forecasts where forecast_for <= end_date (ISO format).
+            issued_start_date: Filter forecasts where issued_at >= issued_start_date (ISO format).
+            issued_end_date: Filter forecasts where issued_at <= issued_end_date (ISO format).
             page_size: Number of forecasts per page (default 200).
         """
         endpoint = API_FORECASTS.format(city_id=city_id)
-        all_forecasts = []
-        page = 1
-        total = None
 
-        while True:
+        def build_params(page_num: int) -> dict[str, Any]:
             params = {
                 "all_versions": str(all_versions).lower(),
-                "page": page,
+                "page": page_num,
                 "page_size": page_size,
             }
             if model:
@@ -218,30 +219,45 @@ class MeteoClubApi:
                 params["start_date"] = start_date
             if end_date:
                 params["end_date"] = end_date
+            if issued_start_date:
+                params["issued_start_date"] = issued_start_date
+            if issued_end_date:
+                params["issued_end_date"] = issued_end_date
+            return params
 
-            result = await self._request("GET", endpoint, params=params)
-            if not result:
-                break
+        # Fetch first page to get total count
+        first_result = await self._request("GET", endpoint, params=build_params(1))
+        if not first_result:
+            return {"total": 0, "forecasts": []}
 
-            forecasts = result.get("forecasts", [])
-            all_forecasts.extend(forecasts)
+        all_forecasts = first_result.get("forecasts", [])
+        total = first_result.get("total", 0)
 
-            if total is None:
-                total = result.get("total", 0)
+        # Calculate how many more pages we need
+        total_pages = (total + page_size - 1) // page_size if page_size else 1
 
-            # Check if we've fetched all pages
-            if len(all_forecasts) >= total or len(forecasts) < page_size:
-                break
+        if total_pages > 1:
+            # Fetch remaining pages in parallel (with a reasonable limit)
+            max_parallel = min(total_pages - 1, 10)  # Limit parallel requests
+            remaining_pages = list(range(2, min(total_pages + 1, 102)))  # Safety limit at 100 pages
 
-            page += 1
+            async def fetch_page(page_num: int) -> list:
+                try:
+                    result = await self._request("GET", endpoint, params=build_params(page_num))
+                    return result.get("forecasts", []) if result else []
+                except Exception as err:
+                    _LOGGER.warning("Error fetching forecast page %d: %s", page_num, err)
+                    return []
 
-            # Safety limit to prevent infinite loops
-            if page > 100:
-                _LOGGER.warning("Pagination safety limit reached for forecasts")
-                break
+            # Fetch in batches to avoid overwhelming the server
+            for i in range(0, len(remaining_pages), max_parallel):
+                batch = remaining_pages[i:i + max_parallel]
+                results = await asyncio.gather(*[fetch_page(p) for p in batch])
+                for forecasts in results:
+                    all_forecasts.extend(forecasts)
 
         return {
-            "total": total or len(all_forecasts),
+            "total": total,
             "forecasts": all_forecasts,
         }
 
