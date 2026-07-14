@@ -230,16 +230,11 @@ async def websocket_get_chart_data(
 
             model_series = []
 
-            # For each observation time, find the forecast that was issued
-            # `horizon_days` before and predicted that time
+            # For each observation time, find the appropriate forecast
             for obs_point in observation_series:
                 obs_time = datetime.fromisoformat(
                     obs_point["time"].replace("Z", "+00:00")
                 )
-
-                # We want forecasts issued around (obs_time - horizon_days)
-                # that predicted for obs_time
-                target_issued = obs_time - timedelta(days=horizon_days)
 
                 best_forecast = None
                 best_score = None
@@ -264,14 +259,23 @@ async def websocket_get_chart_data(
                     if forecast_diff > 3 * 3600:
                         continue
 
-                    # Check if it was issued around the target horizon
-                    # (within 12 hours tolerance)
-                    issued_diff = abs((issued_at - target_issued).total_seconds())
-                    if issued_diff > 12 * 3600:
-                        continue
+                    if horizon_days == 0:
+                        # Special case: "Latest" - find the most recently issued
+                        # forecast that predicts for this observation time
+                        # (must be issued before or at observation time)
+                        if issued_at > obs_time:
+                            continue
+                        # Score: prefer most recent (smaller is better, so negate)
+                        score = -issued_at.timestamp() + forecast_diff
+                    else:
+                        # Normal case: find forecast issued around target horizon
+                        target_issued = obs_time - timedelta(days=horizon_days)
+                        issued_diff = abs((issued_at - target_issued).total_seconds())
+                        if issued_diff > 12 * 3600:
+                            continue
+                        # Score: prefer exact matches
+                        score = forecast_diff + issued_diff
 
-                    # Score: prefer exact matches
-                    score = forecast_diff + issued_diff
                     if best_score is None or score < best_score:
                         best_forecast = fc
                         best_score = score

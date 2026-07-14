@@ -7,7 +7,7 @@ CONF_SERVER_URL = "server_url"
 
 # Default values
 DEFAULT_SERVER_URL = "http://localhost:8000"
-DEFAULT_SCAN_INTERVAL = 300  # 5 minutes
+DEFAULT_SCAN_INTERVAL = 120  # 2 minutes
 
 # API endpoints
 API_FAVORITES = "/favorites"
@@ -164,4 +164,5 @@ DASHBOARD_METRICS = {
 }
 
 # Available horizon options in days for the dashboard
-HORIZON_OPTIONS = [1, 2, 3, 5, 7, 10]
+# 0 is a special case meaning "latest" (current observation)
+HORIZON_OPTIONS = [0, 1, 2, 3, 5, 7, 10]

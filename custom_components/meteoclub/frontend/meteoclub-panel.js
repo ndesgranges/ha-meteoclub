@@ -390,7 +390,7 @@ class MeteoClubPanel extends HTMLElement {
     // Note: ha-date-range-picker is added programmatically to ensure hass is set BEFORE
     // the element is added to DOM. This prevents "this.hass is undefined" errors in Lit's willUpdate.
     // Content goes INSIDE ha-top-app-bar-fixed (in default slot)
-    const horizonText = `${this._selectedHorizon} ${this._selectedHorizon > 1 ? this._t('days') : this._t('day')}`;
+    const horizonText = this._selectedHorizon === 0 ? this._t('latest') : `${this._selectedHorizon} ${this._selectedHorizon > 1 ? this._t('days') : this._t('day')}`;
 
     this.shadowRoot.innerHTML = `
       <style>${this._getStyles()}</style>
@@ -422,7 +422,7 @@ class MeteoClubPanel extends HTMLElement {
               <div class="control-group">
                 <label>${this._t('forecast_horizon')}</label>
                 <select id="horizon-select" class="native-select">
-                  ${this._config.horizons.map(h => `<option value="${h}" ${h === this._selectedHorizon ? "selected" : ""}>${h} ${h > 1 ? this._t('days') : this._t('day')}</option>`).join("")}
+                  ${this._config.horizons.map(h => `<option value="${h}" ${h === this._selectedHorizon ? "selected" : ""}>${h === 0 ? this._t('latest') : `${h} ${h > 1 ? this._t('days') : this._t('day')}`}</option>`).join("")}
                 </select>
               </div>
 
@@ -445,7 +445,7 @@ class MeteoClubPanel extends HTMLElement {
             <div class="card-content">
               <p>
                 <ha-icon icon="mdi:information-outline"></ha-icon>
-                ${this._t('info_text', { horizon: `<strong>${horizonText}</strong>` })}
+                ${this._selectedHorizon === 0 ? this._t('info_text_latest') : this._t('info_text', { horizon: `<strong>${horizonText}</strong>` })}
               </p>
             </div>
           </ha-card>
