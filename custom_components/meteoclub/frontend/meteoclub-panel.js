@@ -42,17 +42,32 @@ class MeteoClubPanel extends HTMLElement {
     const saved = this._loadPreferences();
     this._selectedCity = saved.city || null;
     this._selectedMetric = saved.metric || "temperature";
-    this._selectedHorizon = saved.horizon || 3;
+    // Default to "latest" horizon (0); use ?? so a saved 0 is preserved.
+    this._selectedHorizon = saved.horizon ?? 0;
 
+    // Default range: today, day-aligned (00:00:00.000 → 23:59:59.999).
+    // Day-aligned bounds make ha-date-range-picker arrows shift by whole
+    // days and let presets like "This week" behave as in the energy dashboard.
     const now = new Date();
-    this._endDate = saved.endDate ? new Date(saved.endDate) : now;
-    this._startDate = saved.startDate ? new Date(saved.startDate) : new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    this._startDate = saved.startDate ? new Date(saved.startDate) : todayStart;
+    this._endDate = saved.endDate ? new Date(saved.endDate) : todayEnd;
   }
 
   _loadPreferences() {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
-      return saved ? JSON.parse(saved) : {};
+      if (!saved) return {};
+      const parsed = JSON.parse(saved);
+      // Migration: prefs saved before v2 used a 3-day horizon default and a
+      // 7-day rolling window. Drop those fields so the new defaults apply.
+      if (parsed.prefsVersion !== 2) {
+        delete parsed.horizon;
+        delete parsed.startDate;
+        delete parsed.endDate;
+      }
+      return parsed;
     } catch (e) {
       return {};
     }
@@ -61,6 +76,7 @@ class MeteoClubPanel extends HTMLElement {
   _savePreferences() {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify({
+        prefsVersion: 2,
         city: this._selectedCity,
         metric: this._selectedMetric,
         horizon: this._selectedHorizon,
@@ -475,7 +491,9 @@ class MeteoClubPanel extends HTMLElement {
         dateRangePicker.startDate = this._startDate;
         dateRangePicker.endDate = this._endDate;
         dateRangePicker.setAttribute("extended-presets", "");
-        dateRangePicker.timePicker = true;  // Enable time selection
+        // Day-only selection (like the energy dashboard) so arrows shift by
+        // whole days and the "Today / This week / …" presets work correctly.
+        dateRangePicker.timePicker = false;
 
         dateRangePicker.addEventListener("value-changed", (e) => {
           const { startDate, endDate } = e.detail.value;
