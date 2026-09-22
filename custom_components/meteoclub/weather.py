@@ -31,62 +31,151 @@ from .coordinator import MeteoClubCoordinator
 
 
 def map_condition(raw_condition: str | None) -> str | None:
-    """Map MeteoClub/meteociel condition strings to HA conditions.
+    """Map MeteoClub/meteociel condition strings to HA weather conditions.
 
-    HA conditions: clear-night, cloudy, fog, hail, lightning, lightning-rainy,
-    partlycloudy, pouring, rainy, snowy, snowy-rainy, sunny, windy, windy-variant,
-    exceptional
+    HA conditions: clear-night, cloudy, exceptional, fog, hail, lightning,
+    lightning-rainy, partlycloudy, pouring, rainy, snowy, snowy-rainy, sunny,
+    windy, windy-variant.
+
+    Meteociel picto ``alt``/``title`` attributes are French descriptions such as
+    "Ensoleillé", "Peu nuageux", "Pluie forte", "Nuit claire"... Rules are
+    ordered so that more specific / compound patterns are checked before
+    broader single-word matches (e.g. "peu nuageux" must win over "nuageux",
+    "pluie forte" over "pluie", "pluie et neige" over both).
     """
     if not raw_condition:
         return None
 
-    condition = raw_condition.lower()
+    text = raw_condition.lower().strip()
 
-    # Sun/Clear
-    if any(x in condition for x in ["soleil", "sunny", "clear", "ensoleill", "beau"]):
-        return "sunny"
+    # (substring, HA condition) — evaluated in order, first match wins.
+    rules: list[tuple[str, str]] = [
+        # Thunderstorm + rain (meteociel: "Risque d'orage ... avec pluie modérée à forte")
+        ("avec pluie modérée", "lightning-rainy"),
+        ("avec pluie forte", "lightning-rainy"),
+        ("avec pluie", "lightning-rainy"),
+        ("averses orageuses", "lightning-rainy"),
 
-    # Partly cloudy
-    if any(x in condition for x in ["partiellement", "partly", "éclaircies", "voilé", "peu nuageux"]):
-        return "partlycloudy"
+        # Thunderstorm without rain (meteociel: "Risque d'orage faible/fort")
+        ("risque d'orage", "lightning"),
+        ("orageuse", "lightning-rainy"),
+        ("orageux", "lightning-rainy"),
+        ("orages", "lightning-rainy"),
+        ("orage", "lightning-rainy"),
+        ("thunderstorm", "lightning-rainy"),
+        ("thunder", "lightning"),
+        ("éclair", "lightning"),
+        ("storm", "lightning-rainy"),
 
-    # Cloudy/Overcast
-    if any(x in condition for x in ["nuageux", "couvert", "cloudy", "overcast", "gris"]):
-        return "cloudy"
+        # Mixed precipitation / freezing rain (before plain rain/snow)
+        ("pluie et neige", "snowy-rainy"),
+        ("pluie verglaçante", "snowy-rainy"),
+        ("neige fondue", "snowy-rainy"),
+        ("neige mêlée", "snowy-rainy"),
+        ("verglas", "snowy-rainy"),
+        ("sleet", "snowy-rainy"),
 
-    # Fog/Mist
-    if any(x in condition for x in ["brouillard", "brume", "fog", "mist"]):
-        return "fog"
+        # Hail / graupel
+        ("grêle", "hail"),
+        ("grésil", "hail"),
+        ("hail", "hail"),
 
-    # Thunderstorm
-    if any(x in condition for x in ["orage", "thunder", "storm", "éclair"]):
-        return "lightning-rainy"
+        # Snow
+        ("neige forte", "snowy"),
+        ("fortes chutes de neige", "snowy"),
+        ("chutes de neige", "snowy"),
+        ("neige faible", "snowy"),
+        ("neige", "snowy"),
+        ("flocons", "snowy"),
+        ("snow", "snowy"),
 
-    # Heavy rain
-    if any(x in condition for x in ["forte pluie", "heavy rain", "averse", "déluge", "pouring"]):
-        return "pouring"
+        # Heavy rain / heavy showers (before regular rain — meteociel: "Averses de pluie fortes")
+        ("averses de pluie fortes", "pouring"),
+        ("averses de pluie forte", "pouring"),
+        ("pluie forte", "pouring"),
+        ("fortes pluies", "pouring"),
+        ("pluies fortes", "pouring"),
+        ("fortes averses", "pouring"),
+        ("averses fortes", "pouring"),
+        ("heavy rain", "pouring"),
+        ("pouring", "pouring"),
+        ("déluge", "pouring"),
 
-    # Rain
-    if any(x in condition for x in ["pluie", "rain", "pluvieux", "bruine", "drizzle"]):
-        return "rainy"
+        # Regular rain / drizzle / showers
+        ("averses de pluie", "rainy"),
+        ("averses", "rainy"),
+        ("averse", "rainy"),
+        ("bruine", "rainy"),
+        ("drizzle", "rainy"),
+        ("pluie faible", "rainy"),
+        ("pluie modérée", "rainy"),
+        ("pluie", "rainy"),
+        ("pluvieux", "rainy"),
+        ("rain", "rainy"),
 
-    # Snow
-    if any(x in condition for x in ["neige", "snow"]):
-        return "snowy"
+        # Fog / mist (meteociel: "Brumes ou brouillard")
+        ("brouillard", "fog"),
+        ("brumeux", "fog"),
+        ("brumes", "fog"),
+        ("brume", "fog"),
+        ("fog", "fog"),
+        ("mist", "fog"),
 
-    # Sleet
-    if any(x in condition for x in ["verglas", "sleet", "pluie et neige", "neige fondue"]):
-        return "snowy-rainy"
+        # Night clear (before day rules so "nuit claire" wins over "clair")
+        ("nuit claire", "clear-night"),
+        ("nuit dégagée", "clear-night"),
+        ("nuit étoilée", "clear-night"),
+        ("clear night", "clear-night"),
 
-    # Hail
-    if any(x in condition for x in ["grêle", "hail"]):
-        return "hail"
+        # Partly cloudy (before cloudy so "peu nuageux" wins over "nuageux";
+        # meteociel: "Mitigé" = variable/mixed sky, "Voilé" = veiled/hazy)
+        ("mitigé", "partlycloudy"),
+        ("mitigée", "partlycloudy"),
+        ("peu nuageux", "partlycloudy"),
+        ("peu nuageuse", "partlycloudy"),
+        ("partiellement nuageux", "partlycloudy"),
+        ("partiellement nuageuse", "partlycloudy"),
+        ("éclaircies", "partlycloudy"),
+        ("ciel voilé", "partlycloudy"),
+        ("voilé", "partlycloudy"),
+        ("voilée", "partlycloudy"),
+        ("partly", "partlycloudy"),
 
-    # Wind
-    if any(x in condition for x in ["vent", "wind"]):
-        return "windy"
+        # Cloudy / overcast
+        ("très nuageux", "cloudy"),
+        ("nuageux", "cloudy"),
+        ("nuageuse", "cloudy"),
+        ("couvert", "cloudy"),
+        ("couverte", "cloudy"),
+        ("overcast", "cloudy"),
+        ("cloudy", "cloudy"),
+        ("gris", "cloudy"),
 
-    # Default: return None to let HA show unknown
+        # Wind
+        ("tempête", "windy"),
+        ("rafales", "windy"),
+        ("vent fort", "windy"),
+        ("venteux", "windy"),
+        ("windy", "windy"),
+
+        # Clear / sunny day (last so more specific patterns win)
+        ("ensoleillé", "sunny"),
+        ("ensoleillée", "sunny"),
+        ("soleil", "sunny"),
+        ("ciel dégagé", "sunny"),
+        ("dégagé", "sunny"),
+        ("dégagée", "sunny"),
+        ("ciel clair", "sunny"),
+        ("beau temps", "sunny"),
+        ("beau", "sunny"),
+        ("clear", "sunny"),
+        ("sunny", "sunny"),
+    ]
+
+    for needle, ha_condition in rules:
+        if needle in text:
+            return ha_condition
+
     return None
 
 
