@@ -6,7 +6,8 @@ Current conditions from observations, forecasts from weather models.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timezone
+import logging
 from typing import Any
 
 from homeassistant.components.weather import (
@@ -28,6 +29,8 @@ from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import DOMAIN
 from .coordinator import MeteoClubCoordinator
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def map_condition(raw_condition: str | None) -> str | None:
@@ -251,6 +254,63 @@ class MeteoClubWeather(CoordinatorEntity[MeteoClubCoordinator], WeatherEntity):
         return None
 
     @property
+    def _city(self) -> dict[str, Any] | None:
+        """Get city info (contains latitude/longitude/timezone)."""
+        if self.coordinator.data:
+            return self.coordinator.data.get("city")
+        return None
+
+    def _is_night(self, when: datetime) -> bool | None:
+        """Return True if ``when`` is between sunset and sunrise at the city.
+
+        Uses the city's latitude/longitude via ``astral`` (which HA already
+        bundles). Falls back to ``sun.sun`` if coordinates are missing.
+        Returns ``None`` when neither source is usable.
+        """
+        city = self._city
+        lat = city.get("latitude") if city else None
+        lon = city.get("longitude") if city else None
+
+        if lat is not None and lon is not None:
+            try:
+                # pylint: disable=import-outside-toplevel
+                from astral import LocationInfo
+                from astral.sun import sun as astral_sun
+            except ImportError:
+                _LOGGER.debug("astral not available; skipping night detection")
+            else:
+                if when.tzinfo is None:
+                    when = when.replace(tzinfo=timezone.utc)
+                tz_name = (city.get("timezone") if city else None) or "UTC"
+                loc = LocationInfo(
+                    name=self._city_name,
+                    region="",
+                    timezone=tz_name,
+                    latitude=float(lat),
+                    longitude=float(lon),
+                )
+                try:
+                    times = astral_sun(loc.observer, date=when.astimezone().date(), tzinfo=timezone.utc)
+                except ValueError:
+                    # Polar day / polar night: astral raises for extreme latitudes.
+                    return None
+                return when < times["sunrise"] or when >= times["sunset"]
+
+        sun_state = self.hass.states.get("sun.sun") if self.hass else None
+        if sun_state is not None:
+            return sun_state.state == "below_horizon"
+        return None
+
+    def _apply_night(self, condition: str | None, when: datetime | None) -> str | None:
+        """Swap ``sunny`` for ``clear-night`` when it is night at ``when``."""
+        if condition != "sunny" or when is None:
+            return condition
+        is_night = self._is_night(when)
+        if is_night:
+            return "clear-night"
+        return condition
+
+    @property
     def native_temperature(self) -> float | None:
         """Return current temperature."""
         if obs := self._observation:
@@ -321,7 +381,8 @@ class MeteoClubWeather(CoordinatorEntity[MeteoClubCoordinator], WeatherEntity):
         """Return current weather condition."""
         if obs := self._observation:
             raw_condition = obs.get("weather_condition")
-            return map_condition(raw_condition)
+            mapped = map_condition(raw_condition)
+            return self._apply_night(mapped, datetime.now(timezone.utc))
         return None
 
     async def async_forecast_daily(self) -> list[Forecast] | None:
@@ -404,6 +465,7 @@ class MeteoClubWeather(CoordinatorEntity[MeteoClubCoordinator], WeatherEntity):
             if not forecast_for:
                 continue
 
+            dt = datetime.fromisoformat(forecast_for.replace("Z", "+00:00"))
             forecast: Forecast = {
                 "datetime": forecast_for,
                 "native_temperature": fc.get("temperature"),
@@ -411,7 +473,9 @@ class MeteoClubWeather(CoordinatorEntity[MeteoClubCoordinator], WeatherEntity):
                 "native_precipitation": fc.get("precipitation_mm"),
                 "native_wind_speed": fc.get("wind_speed_kmh"),
                 "wind_bearing": fc.get("wind_direction"),
-                "condition": map_condition(fc.get("weather_description")),
+                "condition": self._apply_night(
+                    map_condition(fc.get("weather_description")), dt
+                ),
             }
             result.append(forecast)
 

@@ -14,6 +14,7 @@ API_FAVORITES = "/favorites"
 API_CITIES = "/cities"
 API_CITY = "/cities/{city_id}"
 API_OBSERVATIONS = "/observations/city/{city_id}"
+API_OBSERVATIONS_LATEST = "/observations/city/{city_id}/latest"
 API_FORECASTS = "/forecasts/city/{city_id}"
 
 # Available forecast models

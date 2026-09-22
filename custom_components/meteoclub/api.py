@@ -15,6 +15,7 @@ from .const import (
     API_FAVORITES,
     API_FORECASTS,
     API_OBSERVATIONS,
+    API_OBSERVATIONS_LATEST,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -262,8 +263,11 @@ class MeteoClubApi:
         }
 
     async def get_latest_observation(self, city_id: int) -> dict[str, Any] | None:
-        """Get the most recent observation for a city."""
-        data = await self.get_observations(city_id, page_size=1)
-        if data and data.get("observations"):
-            return data["observations"][0]
-        return None
+        """Get the most recent observation for a city.
+
+        Uses the dedicated ``/latest`` endpoint which applies the backend's
+        ICON EU fallback for ``weather_condition`` when the raw observation
+        does not carry one.
+        """
+        endpoint = API_OBSERVATIONS_LATEST.format(city_id=city_id)
+        return await self._request("GET", endpoint)
