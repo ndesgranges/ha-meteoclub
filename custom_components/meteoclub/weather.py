@@ -261,15 +261,25 @@ class MeteoClubWeather(CoordinatorEntity[MeteoClubCoordinator], WeatherEntity):
         return None
 
     def _is_night(self, when: datetime) -> bool | None:
-        """Return True if ``when`` is between sunset and sunrise at the city.
+        """Return True if ``when`` is between sunset and sunrise.
 
-        Uses the city's latitude/longitude via ``astral`` (which HA already
-        bundles). Falls back to ``sun.sun`` if coordinates are missing.
-        Returns ``None`` when neither source is usable.
+        Prefers per-city sunrise/sunset computed via ``astral`` when the city
+        has ``latitude``/``longitude``. Falls back to the HA installation's
+        coordinates (``hass.config.latitude/longitude``) so per-forecast-time
+        detection still works when the city has no coords. Falls back to
+        ``sun.sun`` (only meaningful for ``now``) as a last resort.
         """
         city = self._city
         lat = city.get("latitude") if city else None
         lon = city.get("longitude") if city else None
+        tz_name = (city.get("timezone") if city else None) or "UTC"
+
+        if lat is None or lon is None:
+            hass = self.hass
+            if hass is not None and hass.config.latitude is not None:
+                lat = hass.config.latitude
+                lon = hass.config.longitude
+                tz_name = hass.config.time_zone or tz_name
 
         if lat is not None and lon is not None:
             try:
@@ -277,11 +287,10 @@ class MeteoClubWeather(CoordinatorEntity[MeteoClubCoordinator], WeatherEntity):
                 from astral import LocationInfo
                 from astral.sun import sun as astral_sun
             except ImportError:
-                _LOGGER.debug("astral not available; skipping night detection")
+                _LOGGER.debug("astral not available; falling back to sun.sun")
             else:
                 if when.tzinfo is None:
                     when = when.replace(tzinfo=timezone.utc)
-                tz_name = (city.get("timezone") if city else None) or "UTC"
                 loc = LocationInfo(
                     name=self._city_name,
                     region="",
@@ -290,7 +299,11 @@ class MeteoClubWeather(CoordinatorEntity[MeteoClubCoordinator], WeatherEntity):
                     longitude=float(lon),
                 )
                 try:
-                    times = astral_sun(loc.observer, date=when.astimezone().date(), tzinfo=timezone.utc)
+                    times = astral_sun(
+                        loc.observer,
+                        date=when.astimezone(timezone.utc).date(),
+                        tzinfo=timezone.utc,
+                    )
                 except ValueError:
                     # Polar day / polar night: astral raises for extreme latitudes.
                     return None
